@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect width="128" height="128" rx="24" fill="#1a1a2e"/>
+  <rect x="30" y="36" width="8" height="50" rx="2" fill="#e67e22"/>
+  <rect x="44" y="28" width="8" height="58" rx="2" fill="#e67e22"/>
+  <rect x="58" y="36" width="8" height="50" rx="2" fill="#e67e22"/>
+  <rect x="72" y="28" width="8" height="58" rx="2" fill="#e67e22"/>
+  <rect x="86" y="36" width="8" height="50" rx="2" fill="#e67e22"/>
+  <path d="M56 42l8-14 8 14-4-2v12h-8V40z" fill="#f39c12" opacity="0.6"/>
+  <text x="64" y="108" text-anchor="middle" fill="#7f8c8d" font-family="Segoe UI,sans-serif" font-size="11" font-weight="600">FORGE</text>
+</svg>

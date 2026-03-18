@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.svg" width="128" height="128" alt="FirewallForge"></p>
+
 # FirewallForge
 
 WPF GUI suite for Windows Firewall rule management. Two tools: a **live manager** for your system firewall and an **offline editor** for safe rule manipulation on backup files.
