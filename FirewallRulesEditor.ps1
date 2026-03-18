@@ -6,7 +6,7 @@
     Does NOT modify your system's actual firewall - purely an offline editor.
 .NOTES
     Author: Matt
-    Version: 1.0
+    Version: 1.1.0
 #>
 
 Add-Type -AssemblyName PresentationFramework
@@ -20,7 +20,7 @@ Add-Type -AssemblyName System.Windows.Forms
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Firewall Rules Editor v1.0 (Offline)" 
+        Title="Firewall Rules Editor v1.1.0 (Offline) - 0 rules"
         Height="800" Width="1200"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"
@@ -33,7 +33,7 @@ Add-Type -AssemblyName System.Windows.Forms
         <SolidColorBrush x:Key="ComboBoxDropdownBackground" Color="#2D2D30"/>
         <SolidColorBrush x:Key="ComboBoxItemHover" Color="#3E3E42"/>
         <SolidColorBrush x:Key="ComboBoxItemSelected" Color="#0078D4"/>
-        
+
         <Style TargetType="Button">
             <Setter Property="Background" Value="#0078D4"/>
             <Setter Property="Foreground" Value="White"/>
@@ -45,8 +45,8 @@ Add-Type -AssemblyName System.Windows.Forms
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -77,8 +77,8 @@ Add-Type -AssemblyName System.Windows.Forms
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -105,8 +105,8 @@ Add-Type -AssemblyName System.Windows.Forms
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -133,8 +133,8 @@ Add-Type -AssemblyName System.Windows.Forms
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -201,16 +201,16 @@ Add-Type -AssemblyName System.Windows.Forms
             <Setter Property="Foreground" Value="#E0E0E0"/>
             <Setter Property="FontSize" Value="13"/>
         </Style>
-        
+
         <ControlTemplate x:Key="ComboBoxToggleButton" TargetType="ToggleButton">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition/>
                     <ColumnDefinition Width="30"/>
                 </Grid.ColumnDefinitions>
-                <Border x:Name="Border" Grid.ColumnSpan="2" Background="{StaticResource ComboBoxBackground}" 
+                <Border x:Name="Border" Grid.ColumnSpan="2" Background="{StaticResource ComboBoxBackground}"
                         BorderBrush="{StaticResource ComboBoxBorder}" BorderThickness="1" CornerRadius="3"/>
-                <Path x:Name="Arrow" Grid.Column="1" Fill="#E0E0E0" HorizontalAlignment="Center" 
+                <Path x:Name="Arrow" Grid.Column="1" Fill="#E0E0E0" HorizontalAlignment="Center"
                       VerticalAlignment="Center" Data="M 0 0 L 6 6 L 12 0 Z"/>
             </Grid>
             <ControlTemplate.Triggers>
@@ -219,7 +219,7 @@ Add-Type -AssemblyName System.Windows.Forms
                 </Trigger>
             </ControlTemplate.Triggers>
         </ControlTemplate>
-        
+
         <Style TargetType="ComboBoxItem">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#E0E0E0"/>
@@ -242,7 +242,7 @@ Add-Type -AssemblyName System.Windows.Forms
                 </Setter.Value>
             </Setter>
         </Style>
-        
+
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{StaticResource ComboBoxBackground}"/>
             <Setter Property="Foreground" Value="{StaticResource ComboBoxForeground}"/>
@@ -253,18 +253,18 @@ Add-Type -AssemblyName System.Windows.Forms
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <ToggleButton Name="ToggleButton" Template="{StaticResource ComboBoxToggleButton}" 
-                                          Focusable="False" 
-                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                            <ToggleButton Name="ToggleButton" Template="{StaticResource ComboBoxToggleButton}"
+                                          Focusable="False"
+                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
                                           ClickMode="Press"/>
-                            <ContentPresenter Name="ContentSite" IsHitTestVisible="False" 
-                                              Content="{TemplateBinding SelectionBoxItem}" 
+                            <ContentPresenter Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
                                               Margin="10,3,30,3" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" 
+                            <Popup Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
                                    AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
-                                <Grid Name="DropDown" SnapsToDevicePixels="True" 
+                                <Grid Name="DropDown" SnapsToDevicePixels="True"
                                       MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                    <Border Background="{StaticResource ComboBoxDropdownBackground}" 
+                                    <Border Background="{StaticResource ComboBoxDropdownBackground}"
                                             BorderThickness="1" BorderBrush="{StaticResource ComboBoxBorder}" CornerRadius="3">
                                         <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
                                             <StackPanel IsItemsHost="True"/>
@@ -278,7 +278,7 @@ Add-Type -AssemblyName System.Windows.Forms
             </Setter>
         </Style>
     </Window.Resources>
-    
+
     <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -288,23 +288,25 @@ Add-Type -AssemblyName System.Windows.Forms
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        
+
         <!-- Header -->
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="Firewall Rules Editor" FontSize="28" FontWeight="Bold" Foreground="#0078D4"/>
-            <TextBlock Text="Import, Edit, and Export Firewall Rules (Offline - Does NOT affect your system firewall)" 
+            <TextBlock Text="Import, Edit, and Export Firewall Rules (Offline - Does NOT affect your system firewall)"
                        FontSize="13" Foreground="#808080"/>
         </StackPanel>
-        
+
         <!-- Import/Export Buttons -->
         <WrapPanel Grid.Row="1" Margin="0,0,0,10">
             <Button x:Name="btnImportBackup" Content="Import .fwbackup" Width="140"/>
             <Button x:Name="btnImportCSV" Content="Import CSV" Width="120"/>
+            <Button x:Name="btnMergeBackup" Content="Merge .fwbackup" Style="{StaticResource WarningButton}" Width="140"/>
             <Button x:Name="btnExportBackup" Content="Export Selected to .fwbackup" Style="{StaticResource SuccessButton}" Width="200"/>
             <Button x:Name="btnExportCSV" Content="Export Selected to CSV" Style="{StaticResource SuccessButton}" Width="180"/>
+            <Button x:Name="btnShowChanges" Content="Show Changes" Width="120"/>
             <Button x:Name="btnClearAll" Content="Clear All" Style="{StaticResource DangerButton}" Width="100"/>
         </WrapPanel>
-        
+
         <!-- Selection and Filter Tools -->
         <WrapPanel Grid.Row="2" Margin="0,0,0,10" VerticalAlignment="Center">
             <Button x:Name="btnSelectAll" Content="Select All" Style="{StaticResource WarningButton}" Width="100"/>
@@ -318,10 +320,10 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnDeleteSelected" Content="Delete Selected" Style="{StaticResource DangerButton}" Width="130" Margin="20,0,0,0"/>
             <Button x:Name="btnRefreshCounts" Content="Refresh Count" Width="110" Margin="10,0,0,0"/>
         </WrapPanel>
-        
+
         <!-- Rules DataGrid with Checkbox -->
-        <DataGrid x:Name="dgRules" Grid.Row="3" 
-                  AutoGenerateColumns="False" 
+        <DataGrid x:Name="dgRules" Grid.Row="3"
+                  AutoGenerateColumns="False"
                   IsReadOnly="False"
                   SelectionMode="Extended"
                   CanUserAddRows="False"
@@ -332,7 +334,7 @@ Add-Type -AssemblyName System.Windows.Forms
                 <DataGridTemplateColumn Header="Export" Width="60">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                            <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
@@ -388,7 +390,7 @@ Add-Type -AssemblyName System.Windows.Forms
                 <DataGridTextColumn Header="Program" Binding="{Binding Program}" Width="300"/>
             </DataGrid.Columns>
         </DataGrid>
-        
+
         <!-- Add New Rule Panel -->
         <GroupBox Grid.Row="4" Header="Add New Rule" Margin="0,10,0,0" Foreground="#B0B0B0" BorderBrush="#3C3C3C">
             <Grid Margin="10">
@@ -400,7 +402,7 @@ Add-Type -AssemblyName System.Windows.Forms
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                
+
                 <StackPanel Grid.Column="0" Margin="5">
                     <Label Content="Display Name"/>
                     <TextBox x:Name="txtNewName"/>
@@ -436,7 +438,7 @@ Add-Type -AssemblyName System.Windows.Forms
                 </StackPanel>
             </Grid>
         </GroupBox>
-        
+
         <!-- Status Bar -->
         <Border Grid.Row="5" Background="#252526" Margin="0,10,0,0" Padding="10,8" CornerRadius="4">
             <Grid>
@@ -463,8 +465,10 @@ $Window = [Windows.Markup.XamlReader]::Load($Reader)
 # Get controls
 $btnImportBackup = $Window.FindName("btnImportBackup")
 $btnImportCSV = $Window.FindName("btnImportCSV")
+$btnMergeBackup = $Window.FindName("btnMergeBackup")
 $btnExportBackup = $Window.FindName("btnExportBackup")
 $btnExportCSV = $Window.FindName("btnExportCSV")
+$btnShowChanges = $Window.FindName("btnShowChanges")
 $btnClearAll = $Window.FindName("btnClearAll")
 $btnSelectAll = $Window.FindName("btnSelectAll")
 $btnSelectNone = $Window.FindName("btnSelectNone")
@@ -489,6 +493,7 @@ $txtNewPort = $Window.FindName("txtNewPort")
 # Global variables
 $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
 $Script:FilteredView = $null
+$Script:OriginalRules = $null  # Snapshot at import time for diff
 
 # ============================================================
 # Rule Class using PowerShell class (avoids C# assembly issues)
@@ -516,11 +521,17 @@ function Update-Status {
     $txtStatus.Text = $Message
 }
 
+function Update-TitleBar {
+    $count = $Script:AllRules.Count
+    $Window.Title = "Firewall Rules Editor v1.1.0 (Offline) - $count rules"
+}
+
 function Update-Counts {
     $total = $Script:AllRules.Count
     $selected = ($Script:AllRules | Where-Object { $_.Selected }).Count
     $txtRuleCount.Text = "Total: $total"
     $txtSelectedCount.Text = "Selected: $selected"
+    Update-TitleBar
 }
 
 function New-RuleObject {
@@ -538,7 +549,7 @@ function New-RuleObject {
         [string]$Program = "Any",
         [bool]$Selected = $false
     )
-    
+
     $rule = [FirewallRuleItem]::new()
     $rule.Name = $Name
     $rule.DisplayName = $DisplayName
@@ -552,26 +563,39 @@ function New-RuleObject {
     $rule.RemotePort = $RemotePort
     $rule.Program = $Program
     $rule.Selected = $Selected
-    
+
     return $rule
+}
+
+function Take-Snapshot {
+    # Deep-copy current rules for later diff comparison
+    $Script:OriginalRules = [System.Collections.Generic.List[PSObject]]::new()
+    foreach ($r in $Script:AllRules) {
+        $copy = New-RuleObject `
+            -Name $r.Name -DisplayName $r.DisplayName -Description $r.Description `
+            -Direction $r.Direction -Action $r.Action -Enabled $r.Enabled `
+            -Profile $r.Profile -Protocol $r.Protocol -LocalPort $r.LocalPort `
+            -RemotePort $r.RemotePort -Program $r.Program -Selected $r.Selected
+        $Script:OriginalRules.Add($copy)
+    }
 }
 
 function Import-FWBackup {
     $openDialog = New-Object Microsoft.Win32.OpenFileDialog
     $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
     $openDialog.Title = "Import Firewall Backup"
-    
+
     if ($openDialog.ShowDialog()) {
         try {
             Update-Status "Importing backup..."
             $content = Get-Content $openDialog.FileName -Raw -Encoding UTF8
             $backup = $content | ConvertFrom-Json
-            
+
             $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
             $Script:FilteredView = $null
-            
+
             $ruleData = if ($backup.RuleDetails) { $backup.RuleDetails } else { $backup }
-            
+
             foreach ($r in $ruleData) {
                 $rule = New-RuleObject `
                     -Name $r.Name `
@@ -586,14 +610,17 @@ function Import-FWBackup {
                     -RemotePort $r.RemotePort `
                     -Program $r.Program `
                     -Selected $false
-                    
+
                 $Script:AllRules.Add($rule)
             }
-            
+
             $dgRules.ItemsSource = $Script:AllRules
             Update-Counts
             Update-Status "Imported $($Script:AllRules.Count) rules from backup"
-            
+
+            # Take snapshot for diff tracking
+            Take-Snapshot
+
             if ($backup.BackupDate) {
                 [System.Windows.MessageBox]::Show(
                     "Backup imported successfully!`n`nBackup Date: $($backup.BackupDate)`nComputer: $($backup.ComputerName)`nRules: $($Script:AllRules.Count)",
@@ -619,15 +646,15 @@ function Import-CSV {
     $openDialog = New-Object Microsoft.Win32.OpenFileDialog
     $openDialog.Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*"
     $openDialog.Title = "Import CSV"
-    
+
     if ($openDialog.ShowDialog()) {
         try {
             Update-Status "Importing CSV..."
             $csvData = Import-Csv $openDialog.FileName -Encoding UTF8
-            
+
             $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
             $Script:FilteredView = $null
-            
+
             foreach ($r in $csvData) {
                 $rule = New-RuleObject `
                     -Name $(if ($r.Name) { $r.Name } else { [guid]::NewGuid().ToString() }) `
@@ -642,13 +669,16 @@ function Import-CSV {
                     -RemotePort $(if ($r.RemotePort) { $r.RemotePort } else { "Any" }) `
                     -Program $(if ($r.Program) { $r.Program } else { "Any" }) `
                     -Selected $false
-                    
+
                 $Script:AllRules.Add($rule)
             }
-            
+
             $dgRules.ItemsSource = $Script:AllRules
             Update-Counts
             Update-Status "Imported $($Script:AllRules.Count) rules from CSV"
+
+            # Take snapshot for diff tracking
+            Take-Snapshot
         }
         catch {
             Update-Status "Import failed: $($_.Exception.Message)"
@@ -662,9 +692,245 @@ function Import-CSV {
     }
 }
 
+function Merge-FWBackup {
+    if ($Script:AllRules.Count -eq 0) {
+        [System.Windows.MessageBox]::Show(
+            "No rules loaded. Import a backup first, then merge a second one.",
+            "No Rules Loaded",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+    }
+
+    $openDialog = New-Object Microsoft.Win32.OpenFileDialog
+    $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
+    $openDialog.Title = "Merge Firewall Backup"
+
+    if ($openDialog.ShowDialog()) {
+        try {
+            Update-Status "Merging backup..."
+            $content = Get-Content $openDialog.FileName -Raw -Encoding UTF8
+            $backup = $content | ConvertFrom-Json
+
+            $ruleData = if ($backup.RuleDetails) { $backup.RuleDetails } else { $backup }
+
+            # Build a set of existing rule names for dedup
+            $existingNames = @{}
+            foreach ($r in $Script:AllRules) {
+                $existingNames[$r.Name] = $true
+            }
+
+            $added = 0
+            $skipped = 0
+            foreach ($r in $ruleData) {
+                $ruleName = $r.Name
+                if ($existingNames.ContainsKey($ruleName)) {
+                    $skipped++
+                    continue
+                }
+
+                $rule = New-RuleObject `
+                    -Name $r.Name `
+                    -DisplayName $r.DisplayName `
+                    -Description $r.Description `
+                    -Direction $r.Direction `
+                    -Action $r.Action `
+                    -Enabled $r.Enabled `
+                    -Profile $r.Profile `
+                    -Protocol $r.Protocol `
+                    -LocalPort $r.LocalPort `
+                    -RemotePort $r.RemotePort `
+                    -Program $r.Program `
+                    -Selected $true
+
+                $Script:AllRules.Add($rule)
+                $added++
+            }
+
+            # Refresh grid
+            $Script:FilteredView = $null
+            $dgRules.ItemsSource = $null
+            $dgRules.ItemsSource = $Script:AllRules
+            Update-Counts
+            Update-Status "Merged: $added new rules added, $skipped duplicates skipped"
+
+            [System.Windows.MessageBox]::Show(
+                "Merge complete!`n`nNew rules added: $added`nDuplicates skipped: $skipped`nTotal rules: $($Script:AllRules.Count)",
+                "Merge Complete",
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Information
+            )
+        }
+        catch {
+            Update-Status "Merge failed: $($_.Exception.Message)"
+            [System.Windows.MessageBox]::Show(
+                "Failed to merge backup.`n`nError: $($_.Exception.Message)",
+                "Merge Error",
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Error
+            )
+        }
+    }
+}
+
+function Show-Changes {
+    if ($null -eq $Script:OriginalRules) {
+        [System.Windows.MessageBox]::Show(
+            "No original snapshot available.`nImport a backup first to enable change tracking.",
+            "No Snapshot",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        return
+    }
+
+    # Build lookup of original rules by Name
+    $origByName = @{}
+    foreach ($r in $Script:OriginalRules) {
+        $origByName[$r.Name] = $r
+    }
+
+    # Build lookup of current rules by Name
+    $currByName = @{}
+    foreach ($r in $Script:AllRules) {
+        $currByName[$r.Name] = $r
+    }
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("CHANGE REPORT")
+    [void]$sb.AppendLine("=" * 60)
+    [void]$sb.AppendLine("")
+
+    # Added rules (in current but not in original)
+    $addedRules = @()
+    foreach ($r in $Script:AllRules) {
+        if (-not $origByName.ContainsKey($r.Name)) {
+            $addedRules += $r
+        }
+    }
+
+    # Deleted rules (in original but not in current)
+    $deletedRules = @()
+    foreach ($r in $Script:OriginalRules) {
+        if (-not $currByName.ContainsKey($r.Name)) {
+            $deletedRules += $r
+        }
+    }
+
+    # Modified rules (same name but different properties)
+    $modifiedRules = @()
+    $propNames = @("DisplayName", "Direction", "Action", "Enabled", "Profile", "Protocol", "LocalPort", "RemotePort", "Program")
+    foreach ($r in $Script:AllRules) {
+        if ($origByName.ContainsKey($r.Name)) {
+            $orig = $origByName[$r.Name]
+            $changes = @()
+            foreach ($prop in $propNames) {
+                $oldVal = $orig.$prop
+                $newVal = $r.$prop
+                if ($oldVal -ne $newVal) {
+                    $changes += "  $prop : $oldVal -> $newVal"
+                }
+            }
+            if ($changes.Count -gt 0) {
+                $modifiedRules += @{ Rule = $r; Changes = $changes }
+            }
+        }
+    }
+
+    # Build output
+    [void]$sb.AppendLine("ADDED RULES ($($addedRules.Count)):")
+    [void]$sb.AppendLine("-" * 40)
+    if ($addedRules.Count -eq 0) {
+        [void]$sb.AppendLine("  (none)")
+    }
+    else {
+        foreach ($r in $addedRules) {
+            [void]$sb.AppendLine("  + $($r.DisplayName) [$($r.Direction) $($r.Action)]")
+        }
+    }
+    [void]$sb.AppendLine("")
+
+    [void]$sb.AppendLine("DELETED RULES ($($deletedRules.Count)):")
+    [void]$sb.AppendLine("-" * 40)
+    if ($deletedRules.Count -eq 0) {
+        [void]$sb.AppendLine("  (none)")
+    }
+    else {
+        foreach ($r in $deletedRules) {
+            [void]$sb.AppendLine("  - $($r.DisplayName) [$($r.Direction) $($r.Action)]")
+        }
+    }
+    [void]$sb.AppendLine("")
+
+    [void]$sb.AppendLine("MODIFIED RULES ($($modifiedRules.Count)):")
+    [void]$sb.AppendLine("-" * 40)
+    if ($modifiedRules.Count -eq 0) {
+        [void]$sb.AppendLine("  (none)")
+    }
+    else {
+        foreach ($m in $modifiedRules) {
+            [void]$sb.AppendLine("  * $($m.Rule.DisplayName)")
+            foreach ($c in $m.Changes) {
+                [void]$sb.AppendLine("    $c")
+            }
+        }
+    }
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("Summary: +$($addedRules.Count) added, -$($deletedRules.Count) deleted, ~$($modifiedRules.Count) modified")
+
+    # Show in dialog
+    $reportWindow = New-Object System.Windows.Window
+    $reportWindow.Title = "Changes Since Import"
+    $reportWindow.Width = 700
+    $reportWindow.Height = 500
+    $reportWindow.WindowStartupLocation = "CenterOwner"
+    $reportWindow.Owner = $Window
+    $reportWindow.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E)))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+
+    $rowDef1 = New-Object System.Windows.Controls.RowDefinition
+    $rowDef1.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($rowDef1)
+    $rowDef2 = New-Object System.Windows.Controls.RowDefinition
+    $rowDef2.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($rowDef2)
+
+    $textBox = New-Object System.Windows.Controls.TextBox
+    $textBox.Text = $sb.ToString()
+    $textBox.IsReadOnly = $true
+    $textBox.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26)))
+    $textBox.Foreground = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0)))
+    $textBox.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $textBox.FontSize = 12
+    $textBox.AcceptsReturn = $true
+    $textBox.VerticalScrollBarVisibility = "Auto"
+    $textBox.HorizontalScrollBarVisibility = "Auto"
+    [System.Windows.Controls.Grid]::SetRow($textBox, 0)
+    $grid.Children.Add($textBox)
+
+    $closeBtn = New-Object System.Windows.Controls.Button
+    $closeBtn.Content = "Close"
+    $closeBtn.Width = 100
+    $closeBtn.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
+    $closeBtn.HorizontalAlignment = "Right"
+    $closeBtn.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4)))
+    $closeBtn.Foreground = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White))
+    $closeBtn.Padding = New-Object System.Windows.Thickness(15, 8, 15, 8)
+    $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.Add_Click({ $reportWindow.Close() })
+    [System.Windows.Controls.Grid]::SetRow($closeBtn, 1)
+    $grid.Children.Add($closeBtn)
+
+    $reportWindow.Content = $grid
+    $reportWindow.ShowDialog() | Out-Null
+}
+
 function Export-SelectedToBackup {
     $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
-    
+
     if ($selectedRules.Count -eq 0) {
         [System.Windows.MessageBox]::Show(
             "No rules selected for export.`nUse the checkboxes to select rules.",
@@ -674,12 +940,12 @@ function Export-SelectedToBackup {
         )
         return
     }
-    
+
     $saveDialog = New-Object Microsoft.Win32.SaveFileDialog
     $saveDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|All Files (*.*)|*.*"
     $saveDialog.DefaultExt = ".fwbackup"
     $saveDialog.FileName = "FirewallRules_Custom_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-    
+
     if ($saveDialog.ShowDialog()) {
         try {
             $ruleDetails = $selectedRules | ForEach-Object {
@@ -697,16 +963,16 @@ function Export-SelectedToBackup {
                     Program = $_.Program
                 }
             }
-            
+
             $backup = @{
                 BackupDate = (Get-Date).ToString("o")
                 ComputerName = "Custom Export"
                 RuleCount = $selectedRules.Count
                 RuleDetails = $ruleDetails
             }
-            
+
             $backup | ConvertTo-Json -Depth 10 | Out-File $saveDialog.FileName -Encoding UTF8
-            
+
             Update-Status "Exported $($selectedRules.Count) rules to backup"
             [System.Windows.MessageBox]::Show(
                 "Export successful!`n`nRules exported: $($selectedRules.Count)`nFile: $($saveDialog.FileName)",
@@ -729,7 +995,7 @@ function Export-SelectedToBackup {
 
 function Export-SelectedToCSV {
     $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
-    
+
     if ($selectedRules.Count -eq 0) {
         [System.Windows.MessageBox]::Show(
             "No rules selected for export.`nUse the checkboxes to select rules.",
@@ -739,17 +1005,17 @@ function Export-SelectedToCSV {
         )
         return
     }
-    
+
     $saveDialog = New-Object Microsoft.Win32.SaveFileDialog
     $saveDialog.Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*"
     $saveDialog.DefaultExt = ".csv"
     $saveDialog.FileName = "FirewallRules_Custom_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-    
+
     if ($saveDialog.ShowDialog()) {
         try {
             $selectedRules | Select-Object Name, DisplayName, Description, Direction, Action, Enabled, Profile, Protocol, LocalPort, RemotePort, Program |
                 Export-Csv -Path $saveDialog.FileName -NoTypeInformation -Encoding UTF8
-            
+
             Update-Status "Exported $($selectedRules.Count) rules to CSV"
             [System.Windows.MessageBox]::Show(
                 "Export successful!`n`nRules exported: $($selectedRules.Count)`nFile: $($saveDialog.FileName)",
@@ -766,7 +1032,7 @@ function Export-SelectedToCSV {
 
 function Filter-Rules {
     $searchText = $txtSearch.Text.Trim()
-    
+
     if ([string]::IsNullOrEmpty($searchText)) {
         $Script:FilteredView = $null
         $dgRules.ItemsSource = $Script:AllRules
@@ -796,12 +1062,15 @@ function Filter-Rules {
 # ============================================================
 $btnImportBackup.Add_Click({ Import-FWBackup })
 $btnImportCSV.Add_Click({ Import-CSV })
+$btnMergeBackup.Add_Click({ Merge-FWBackup })
 $btnExportBackup.Add_Click({ Export-SelectedToBackup })
 $btnExportCSV.Add_Click({ Export-SelectedToCSV })
+$btnShowChanges.Add_Click({ Show-Changes })
 
 $btnClearAll.Add_Click({
     $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
     $Script:FilteredView = $null
+    $Script:OriginalRules = $null
     $dgRules.ItemsSource = $Script:AllRules
     Update-Counts
     Update-Status "All rules cleared"
@@ -852,7 +1121,7 @@ $btnDeleteSelected.Add_Click({
     # Get rules that are either checkbox-selected OR row-selected in the DataGrid
     $checkboxSelected = @($Script:AllRules | Where-Object { $_.Selected })
     $rowSelected = @($dgRules.SelectedItems)
-    
+
     # Combine both selections (unique)
     $toDelete = @{}
     foreach ($rule in $checkboxSelected) {
@@ -863,25 +1132,25 @@ $btnDeleteSelected.Add_Click({
             $toDelete[$rule.Name] = $rule
         }
     }
-    
+
     $selectedRules = @($toDelete.Values)
-    
+
     if ($selectedRules.Count -eq 0) {
         [System.Windows.MessageBox]::Show(
-            "No rules selected.`n`nYou can select rules by:`n- Checking the 'Export' checkbox`n- Clicking on rows (Ctrl+Click for multiple)", 
-            "No Selection", 
-            [System.Windows.MessageBoxButton]::OK, 
+            "No rules selected.`n`nYou can select rules by:`n- Checking the 'Export' checkbox`n- Clicking on rows (Ctrl+Click for multiple)",
+            "No Selection",
+            [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Warning)
         return
     }
-    
+
     $confirm = [System.Windows.MessageBox]::Show(
         "Delete $($selectedRules.Count) selected rule(s)?`n`nThis cannot be undone.",
         "Confirm Delete",
         [System.Windows.MessageBoxButton]::YesNo,
         [System.Windows.MessageBoxImage]::Warning
     )
-    
+
     if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
         foreach ($rule in $selectedRules) {
             $Script:AllRules.Remove($rule) | Out-Null
@@ -889,7 +1158,7 @@ $btnDeleteSelected.Add_Click({
                 $Script:FilteredView.Remove($rule) | Out-Null
             }
         }
-        
+
         # Refresh the view
         $dgRules.ItemsSource = $null
         $dgRules.ItemsSource = if ($Script:FilteredView) { $Script:FilteredView } else { $Script:AllRules }
@@ -916,13 +1185,13 @@ $txtSearch.Add_KeyDown({
 
 $btnAddRule.Add_Click({
     $displayName = $txtNewName.Text.Trim()
-    
+
     if ([string]::IsNullOrEmpty($displayName)) {
         [System.Windows.MessageBox]::Show("Please enter a display name for the rule.", "Missing Name",
             [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
-    
+
     $rule = New-RuleObject `
         -Name ("Custom_" + [guid]::NewGuid().ToString().Substring(0, 8)) `
         -DisplayName $displayName `
@@ -935,22 +1204,22 @@ $btnAddRule.Add_Click({
         -RemotePort "Any" `
         -Program "Any" `
         -Selected $true
-    
+
     $Script:AllRules.Add($rule)
-    
+
     # Clear filter and refresh view
     $Script:FilteredView = $null
     $txtSearch.Text = ""
     $dgRules.ItemsSource = $null
     $dgRules.ItemsSource = $Script:AllRules
-    
+
     Update-Counts
     Update-Status "Added rule: $displayName"
-    
+
     # Clear input fields
     $txtNewName.Text = ""
     $txtNewPort.Text = "Any"
-    
+
     # Scroll to the new rule
     $dgRules.ScrollIntoView($rule)
 })
@@ -966,9 +1235,9 @@ $dgRules.Add_CellEditEnding({
 
 # Handle checkbox clicks specifically
 $dgRules.Add_PreviewMouseLeftButtonUp({
-    $Window.Dispatcher.BeginInvoke([Action]{ 
+    $Window.Dispatcher.BeginInvoke([Action]{
         Start-Sleep -Milliseconds 100
-        Update-Counts 
+        Update-Counts
     }, [System.Windows.Threading.DispatcherPriority]::Background)
 })
 
