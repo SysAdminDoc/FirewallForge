@@ -2,6 +2,8 @@
 
 # FirewallForge
 
+![Version](https://img.shields.io/badge/version-v1.1.0-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-PowerShell-lightgrey)
+
 WPF GUI suite for Windows Firewall rule management. Two tools: a **live manager** for your system firewall and an **offline editor** for safe rule manipulation on backup files.
 
 ## Tools
