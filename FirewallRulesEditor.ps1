@@ -462,6 +462,15 @@ Add-Type -AssemblyName System.Windows.Forms
 $Reader = New-Object System.Xml.XmlNodeReader $XAML
 $Window = [Windows.Markup.XamlReader]::Load($Reader)
 
+# codex-branding:start
+                try {
+                    $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
+                    if (Test-Path $brandingIconPath) {
+                        $Window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($brandingIconPath)))
+                    }
+                } catch {
+                }
+                # codex-branding:end
 # Get controls
 $btnImportBackup = $Window.FindName("btnImportBackup")
 $btnImportCSV = $Window.FindName("btnImportCSV")

@@ -504,6 +504,15 @@ try {
 Write-Host "Parsing XAML interface..." -ForegroundColor Cyan
 $Reader = New-Object System.Xml.XmlNodeReader $XAML
 $Window = [Windows.Markup.XamlReader]::Load($Reader)
+# codex-branding:start
+                try {
+                    $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
+                    if (Test-Path $brandingIconPath) {
+                        $Window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($brandingIconPath)))
+                    }
+                } catch {
+                }
+                # codex-branding:end
 Write-Host "  - XAML parsed successfully" -ForegroundColor Gray
 
 Write-Host "Binding controls..." -ForegroundColor Cyan
