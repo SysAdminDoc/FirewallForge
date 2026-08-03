@@ -5,7 +5,7 @@
     A professional GUI application for backing up, editing, and restoring Windows Firewall rules.
 .NOTES
     Author: Matt
-    Version: 1.1.0
+    Version: 1.2.0
     Requires: Administrator privileges
 #>
 
@@ -38,8 +38,8 @@ try {
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="FirewallManager v1.1.0"
-        Height="750" Width="1050"
+        Title="FirewallManager v1.2.0"
+        Height="860" Width="1360"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"
         ResizeMode="CanResizeWithGrip">
@@ -332,12 +332,24 @@ try {
             <Button x:Name="btnExportCSV" Content="Export to CSV" Width="140"/>
             <Button x:Name="btnFindDuplicates" Content="Find Duplicates" Style="{StaticResource WarningButton}" Width="140"/>
             <Button x:Name="btnQuickBlock" Content="Quick Block" Style="{StaticResource DangerButton}" Width="120"/>
+            <Button x:Name="btnProgramWizard" Content="Program Wizard" Style="{StaticResource SuccessButton}" Width="140"/>
+            <Button x:Name="btnConnectionMonitor" Content="Monitor Off" Width="120"/>
+            <Button x:Name="btnOutboundLockdown" Content="Lockdown" Style="{StaticResource DangerButton}" Width="110"/>
+            <Button x:Name="btnRollbackLockdown" Content="Rollback" Style="{StaticResource WarningButton}" Width="110"/>
+            <Button x:Name="btnGroupOps" Content="Group Ops" Width="110"/>
+            <Button x:Name="btnRulePriority" Content="Rule Test" Width="110"/>
+            <Button x:Name="btnLogViewer" Content="Log Viewer" Width="110"/>
+            <Button x:Name="btnAuditRules" Content="Audits" Style="{StaticResource WarningButton}" Width="95"/>
+            <Button x:Name="btnSavedViews" Content="Views" Width="85"/>
+            <Button x:Name="btnScheduleBackups" Content="Schedule" Width="100"/>
+            <Button x:Name="btnBulkTags" Content="Tags" Width="80"/>
         </WrapPanel>
 
         <!-- Search and Filter Row -->
         <WrapPanel Grid.Row="2" Margin="0,0,0,10" VerticalAlignment="Center">
             <TextBox x:Name="txtSearch" Width="250" Margin="5,5,5,5"
                      ToolTip="Search rules by name, program, or port"/>
+            <CheckBox x:Name="chkRegexSearch" Content="Regex" Margin="5,0,0,0" VerticalAlignment="Center"/>
             <Button x:Name="btnSearch" Content="Search" Width="80"/>
             <Button x:Name="btnClearSearch" Content="Clear" Width="80"/>
             <Label Content="Group:" VerticalAlignment="Center" Margin="15,0,0,0"/>
@@ -396,8 +408,13 @@ try {
                 <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="80"/>
                 <DataGridTextColumn Header="Local Port" Binding="{Binding LocalPort}" Width="100"/>
                 <DataGridTextColumn Header="Remote Port" Binding="{Binding RemotePort}" Width="100"/>
+                <DataGridTextColumn Header="Remote Address" Binding="{Binding RemoteAddress}" Width="150"/>
                 <DataGridTextColumn Header="Program" Binding="{Binding Program}" Width="250"/>
+                <DataGridTextColumn Header="Service" Binding="{Binding Service}" Width="100"/>
                 <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="150"/>
+                <DataGridTextColumn Header="Policy" Binding="{Binding PolicySource}" Width="150"/>
+                <DataGridTextColumn Header="Interface" Binding="{Binding VirtualizationScope}" Width="130"/>
+                <DataGridTextColumn Header="Tags" Binding="{Binding Tags}" Width="150"/>
             </DataGrid.Columns>
         </DataGrid>
 
@@ -413,6 +430,7 @@ try {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
@@ -442,16 +460,12 @@ try {
                 </StackPanel>
 
                 <StackPanel Grid.Column="3" Grid.Row="0" Margin="5">
-                    <Label Content="Profile"/>
-                    <ComboBox x:Name="cmbProfile">
-                        <ComboBoxItem Content="Any"/>
-                        <ComboBoxItem Content="Domain"/>
-                        <ComboBoxItem Content="Private"/>
-                        <ComboBoxItem Content="Public"/>
-                        <ComboBoxItem Content="Domain, Private"/>
-                        <ComboBoxItem Content="Domain, Public"/>
-                        <ComboBoxItem Content="Private, Public"/>
-                    </ComboBox>
+                    <Label Content="Profiles"/>
+                    <WrapPanel>
+                        <CheckBox x:Name="chkProfileDomain" Content="Domain" Margin="0,4,10,0"/>
+                        <CheckBox x:Name="chkProfilePrivate" Content="Private" Margin="0,4,10,0"/>
+                        <CheckBox x:Name="chkProfilePublic" Content="Public" Margin="0,4,0,0"/>
+                    </WrapPanel>
                 </StackPanel>
 
                 <StackPanel Grid.Column="0" Grid.Row="1" Margin="5">
@@ -475,7 +489,22 @@ try {
                     <TextBox x:Name="txtRemotePort"/>
                 </StackPanel>
 
-                <StackPanel Grid.Column="3" Grid.Row="1" Grid.ColumnSpan="2" Margin="5" Orientation="Horizontal"
+                <StackPanel Grid.Column="3" Grid.Row="1" Margin="5">
+                    <Label Content="Remote Address"/>
+                    <TextBox x:Name="txtRemoteAddress"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="0" Grid.Row="2" Margin="5">
+                    <Label Content="Service"/>
+                    <TextBox x:Name="txtService"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Grid.Row="2" Grid.ColumnSpan="2" Margin="5">
+                    <Label Content="Tags"/>
+                    <TextBox x:Name="txtTags"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="3" Grid.Row="2" Grid.ColumnSpan="2" Margin="5" Orientation="Horizontal"
                             VerticalAlignment="Bottom">
                     <Button x:Name="btnApplyEdit" Content="Apply Changes" Style="{StaticResource SuccessButton}"/>
                     <Button x:Name="btnDeleteRule" Content="Delete Rule" Style="{StaticResource DangerButton}"/>
@@ -504,15 +533,13 @@ try {
 Write-Host "Parsing XAML interface..." -ForegroundColor Cyan
 $Reader = New-Object System.Xml.XmlNodeReader $XAML
 $Window = [Windows.Markup.XamlReader]::Load($Reader)
-# codex-branding:start
-                try {
-                    $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
-                    if (Test-Path $brandingIconPath) {
-                        $Window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($brandingIconPath)))
-                    }
-                } catch {
-                }
-                # codex-branding:end
+try {
+    $brandingIconPath = Join-Path $PSScriptRoot 'icon.ico'
+    if (Test-Path $brandingIconPath) {
+        $Window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($brandingIconPath)))
+    }
+} catch {
+}
 Write-Host "  - XAML parsed successfully" -ForegroundColor Gray
 
 Write-Host "Binding controls..." -ForegroundColor Cyan
@@ -523,6 +550,17 @@ $btnRefresh = $Window.FindName("btnRefresh")
 $btnExportCSV = $Window.FindName("btnExportCSV")
 $btnFindDuplicates = $Window.FindName("btnFindDuplicates")
 $btnQuickBlock = $Window.FindName("btnQuickBlock")
+$btnProgramWizard = $Window.FindName("btnProgramWizard")
+$btnConnectionMonitor = $Window.FindName("btnConnectionMonitor")
+$btnOutboundLockdown = $Window.FindName("btnOutboundLockdown")
+$btnRollbackLockdown = $Window.FindName("btnRollbackLockdown")
+$btnGroupOps = $Window.FindName("btnGroupOps")
+$btnRulePriority = $Window.FindName("btnRulePriority")
+$btnLogViewer = $Window.FindName("btnLogViewer")
+$btnAuditRules = $Window.FindName("btnAuditRules")
+$btnSavedViews = $Window.FindName("btnSavedViews")
+$btnScheduleBackups = $Window.FindName("btnScheduleBackups")
+$btnBulkTags = $Window.FindName("btnBulkTags")
 $btnSearch = $Window.FindName("btnSearch")
 $btnClearSearch = $Window.FindName("btnClearSearch")
 $btnToggleStats = $Window.FindName("btnToggleStats")
@@ -535,11 +573,17 @@ $dgRules = $Window.FindName("dgRules")
 $cmbEnabled = $Window.FindName("cmbEnabled")
 $cmbAction = $Window.FindName("cmbAction")
 $cmbDirection = $Window.FindName("cmbDirection")
-$cmbProfile = $Window.FindName("cmbProfile")
+$chkProfileDomain = $Window.FindName("chkProfileDomain")
+$chkProfilePrivate = $Window.FindName("chkProfilePrivate")
+$chkProfilePublic = $Window.FindName("chkProfilePublic")
 $cmbProtocol = $Window.FindName("cmbProtocol")
 $cmbGroupFilter = $Window.FindName("cmbGroupFilter")
+$chkRegexSearch = $Window.FindName("chkRegexSearch")
 $txtLocalPort = $Window.FindName("txtLocalPort")
 $txtRemotePort = $Window.FindName("txtRemotePort")
+$txtRemoteAddress = $Window.FindName("txtRemoteAddress")
+$txtService = $Window.FindName("txtService")
+$txtTags = $Window.FindName("txtTags")
 $statsPanel = $Window.FindName("statsPanel")
 $txtStatTotal = $Window.FindName("txtStatTotal")
 $txtStatInbound = $Window.FindName("txtStatInbound")
@@ -556,6 +600,9 @@ $txtStatPublic = $Window.FindName("txtStatPublic")
 $Script:AllRules = @()
 $Script:BackupFolder = Join-Path $env:USERPROFILE "FirewallBackups"
 $Script:SearchActive = $false
+$Script:ConnectionMonitorTimer = $null
+$Script:SeenConnectionEvents = @{}
+$Script:ViewsFolder = Join-Path $env:APPDATA "FirewallForge\Views"
 Write-Host "  - Controls bound successfully`n" -ForegroundColor Gray
 
 # ============================================================
@@ -566,6 +613,165 @@ function Update-Status {
     $txtStatus.Text = $Message
     $txtStatus.Foreground = $Color
     $Window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+}
+
+function Show-ReportWindow {
+    param(
+        [string]$Title,
+        [string]$Text,
+        [int]$Width = 760,
+        [int]$Height = 560
+    )
+
+    $reportWindow = New-Object System.Windows.Window
+    $reportWindow.Title = $Title
+    $reportWindow.Width = $Width
+    $reportWindow.Height = $Height
+    $reportWindow.WindowStartupLocation = "CenterOwner"
+    $reportWindow.Owner = $Window
+    $reportWindow.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E)))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+
+    $rowDef1 = New-Object System.Windows.Controls.RowDefinition
+    $rowDef1.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($rowDef1)
+    $rowDef2 = New-Object System.Windows.Controls.RowDefinition
+    $rowDef2.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($rowDef2)
+
+    $textBox = New-Object System.Windows.Controls.TextBox
+    $textBox.Text = $Text
+    $textBox.IsReadOnly = $true
+    $textBox.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26)))
+    $textBox.Foreground = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0)))
+    $textBox.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $textBox.FontSize = 12
+    $textBox.AcceptsReturn = $true
+    $textBox.VerticalScrollBarVisibility = "Auto"
+    $textBox.HorizontalScrollBarVisibility = "Auto"
+    [System.Windows.Controls.Grid]::SetRow($textBox, 0)
+    $grid.Children.Add($textBox) | Out-Null
+
+    $closeBtn = New-Object System.Windows.Controls.Button
+    $closeBtn.Content = "Close"
+    $closeBtn.Width = 100
+    $closeBtn.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
+    $closeBtn.HorizontalAlignment = "Right"
+    $closeBtn.Background = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4)))
+    $closeBtn.Foreground = (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White))
+    $closeBtn.Padding = New-Object System.Windows.Thickness(15, 8, 15, 8)
+    $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeBtn.Add_Click({ $reportWindow.Close() })
+    [System.Windows.Controls.Grid]::SetRow($closeBtn, 1)
+    $grid.Children.Add($closeBtn) | Out-Null
+
+    $reportWindow.Content = $grid
+    $reportWindow.ShowDialog() | Out-Null
+}
+
+function Get-RuleTags {
+    param([string]$Description)
+
+    if ([string]::IsNullOrWhiteSpace($Description)) {
+        return ""
+    }
+
+    $match = [regex]::Match($Description, "\[Tags:\s*(?<tags>[^\]]+)\]")
+    if ($match.Success) {
+        return $match.Groups["tags"].Value.Trim()
+    }
+
+    return ""
+}
+
+function Set-RuleTagsInDescription {
+    param(
+        [string]$Description,
+        [string]$Tags
+    )
+
+    $base = if ($Description) { $Description } else { "" }
+    $base = [regex]::Replace($base, "\s*\[Tags:\s*[^\]]+\]\s*", " ").Trim()
+
+    if ([string]::IsNullOrWhiteSpace($Tags)) {
+        return $base
+    }
+
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        return "[Tags: $Tags]"
+    }
+
+    return "$base [Tags: $Tags]"
+}
+
+function Get-VirtualizationScope {
+    param(
+        [object]$Rule,
+        [object]$InterfaceFilter
+    )
+
+    $source = @($Rule.DisplayName, $Rule.Group, $Rule.Description, $(if ($InterfaceFilter) { $InterfaceFilter.InterfaceAlias } else { "" })) -join " "
+    if ($source -match "WSL|Windows Subsystem|vEthernet|Hyper-V|HNS") {
+        return "Hyper-V/WSL"
+    }
+
+    if ($InterfaceFilter -and $InterfaceFilter.InterfaceType -and $InterfaceFilter.InterfaceType.ToString() -ne "Any") {
+        return $InterfaceFilter.InterfaceType.ToString()
+    }
+
+    return ""
+}
+
+function Test-RuleTextMatch {
+    param(
+        [object]$Rule,
+        [string]$SearchText,
+        [bool]$UseRegex
+    )
+
+    $fields = @(
+        $Rule.DisplayName, $Rule.Program, $Rule.LocalPort, $Rule.RemotePort, $Rule.RemoteAddress,
+        $Rule.Description, $Rule.Group, $Rule.Service, $Rule.Tags, $Rule.PolicySource
+    )
+
+    foreach ($field in $fields) {
+        $value = if ($null -eq $field) { "" } else { [string]$field }
+        if ($UseRegex) {
+            if ([regex]::IsMatch($value, $SearchText, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                return $true
+            }
+        }
+        elseif ($value -like "*$SearchText*") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-SelectedProfiles {
+    $profiles = @()
+    if ($chkProfileDomain.IsChecked) { $profiles += "Domain" }
+    if ($chkProfilePrivate.IsChecked) { $profiles += "Private" }
+    if ($chkProfilePublic.IsChecked) { $profiles += "Public" }
+
+    if ($profiles.Count -eq 0 -or $profiles.Count -eq 3) {
+        return "Any"
+    }
+
+    return ($profiles -join ", ")
+}
+
+function Set-ProfileCheckboxes {
+    param([string]$Profile)
+
+    $profileText = if ($Profile) { $Profile } else { "Any" }
+    $isAny = $profileText -eq "Any" -or $profileText -eq "Domain, Private, Public"
+    $chkProfileDomain.IsChecked = $isAny -or $profileText -match "Domain"
+    $chkProfilePrivate.IsChecked = $isAny -or $profileText -match "Private"
+    $chkProfilePublic.IsChecked = $isAny -or $profileText -match "Public"
 }
 
 function Update-Statistics {
@@ -649,6 +855,30 @@ function Get-FirewallRules {
             $appFilters[$_.InstanceID] = $_
         }
 
+        Update-Status "Fetching address filters..." "#FFA500"
+        $Window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        Write-Host "  Fetching address filters..." -ForegroundColor Gray
+        $addressFilters = @{}
+        Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue | ForEach-Object {
+            $addressFilters[$_.InstanceID] = $_
+        }
+
+        Update-Status "Fetching service filters..." "#FFA500"
+        $Window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        Write-Host "  Fetching service filters..." -ForegroundColor Gray
+        $serviceFilters = @{}
+        Get-NetFirewallServiceFilter -ErrorAction SilentlyContinue | ForEach-Object {
+            $serviceFilters[$_.InstanceID] = $_
+        }
+
+        Update-Status "Fetching interface filters..." "#FFA500"
+        $Window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
+        Write-Host "  Fetching interface filters..." -ForegroundColor Gray
+        $interfaceFilters = @{}
+        Get-NetFirewallInterfaceFilter -ErrorAction SilentlyContinue | ForEach-Object {
+            $interfaceFilters[$_.InstanceID] = $_
+        }
+
         Update-Status "Processing $ruleCount rules..." "#FFA500"
         $Window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
         Write-Host "  Processing rules..." -ForegroundColor Gray
@@ -657,6 +887,12 @@ function Get-FirewallRules {
             $ruleId = $_.Name
             $portFilter = $portFilters[$_.InstanceID]
             $appFilter = $appFilters[$_.InstanceID]
+            $addressFilter = $addressFilters[$_.InstanceID]
+            $serviceFilter = $serviceFilters[$_.InstanceID]
+            $interfaceFilter = $interfaceFilters[$_.InstanceID]
+            $policySource = if ($_.PolicyStoreSource) { $_.PolicyStoreSource } else { "Local" }
+            $policySourceType = if ($_.PolicyStoreSourceType) { $_.PolicyStoreSourceType.ToString() } else { "Local" }
+            $isGpo = $policySourceType -match "GroupPolicy|GPO" -or ($policySource -and $policySource -ne "PersistentStore" -and $policySource -ne "Local")
 
             [PSCustomObject]@{
                 Name = $_.Name
@@ -669,8 +905,16 @@ function Get-FirewallRules {
                 Protocol = if ($portFilter) { $portFilter.Protocol } else { "Any" }
                 LocalPort = if ($portFilter -and $portFilter.LocalPort) { $portFilter.LocalPort } else { "Any" }
                 RemotePort = if ($portFilter -and $portFilter.RemotePort) { $portFilter.RemotePort } else { "Any" }
+                RemoteAddress = if ($addressFilter -and $addressFilter.RemoteAddress) { $addressFilter.RemoteAddress } else { "Any" }
+                LocalAddress = if ($addressFilter -and $addressFilter.LocalAddress) { $addressFilter.LocalAddress } else { "Any" }
                 Program = if ($appFilter -and $appFilter.Program) { $appFilter.Program } else { "Any" }
+                Service = if ($serviceFilter -and $serviceFilter.Service) { $serviceFilter.Service } else { "Any" }
                 Group = if ($_.Group) { $_.Group } else { "" }
+                PolicySource = $policySource
+                PolicySourceType = $policySourceType
+                IsGpo = $isGpo
+                VirtualizationScope = Get-VirtualizationScope -Rule $_ -InterfaceFilter $interfaceFilter
+                Tags = Get-RuleTags -Description $_.Description
             }
         }
 
@@ -827,6 +1071,7 @@ function Restore-FirewallRules {
 function Search-Rules {
     $searchText = $txtSearch.Text.Trim()
     $groupFilter = $cmbGroupFilter.SelectedItem
+    $useRegex = $chkRegexSearch.IsChecked
 
     $filtered = $Script:AllRules
 
@@ -838,13 +1083,16 @@ function Search-Rules {
     # Apply text search
     if (-not [string]::IsNullOrEmpty($searchText)) {
         $Script:SearchActive = $true
-        $filtered = @($filtered | Where-Object {
-            $_.DisplayName -like "*$searchText*" -or
-            $_.Program -like "*$searchText*" -or
-            $_.LocalPort -like "*$searchText*" -or
-            $_.RemotePort -like "*$searchText*" -or
-            $_.Description -like "*$searchText*"
-        })
+        try {
+            if ($useRegex) {
+                $null = [regex]::new($searchText)
+            }
+            $filtered = @($filtered | Where-Object { Test-RuleTextMatch -Rule $_ -SearchText $searchText -UseRegex $useRegex })
+        }
+        catch {
+            Update-Status "Invalid regex: $($_.Exception.Message)" "#FF0000"
+            return
+        }
     }
     else {
         $Script:SearchActive = $false
@@ -918,12 +1166,7 @@ function Update-EditPanel {
         # Set Direction
         $cmbDirection.SelectedIndex = if ($selectedRule.Direction -eq "Inbound") { 0 } else { 1 }
 
-        # Set Profile
-        $profileMap = @{
-            "Any" = 0; "Domain" = 1; "Private" = 2; "Public" = 3;
-            "Domain, Private" = 4; "Domain, Public" = 5; "Private, Public" = 6
-        }
-        $cmbProfile.SelectedIndex = if ($profileMap.ContainsKey($selectedRule.Profile)) { $profileMap[$selectedRule.Profile] } else { 0 }
+        Set-ProfileCheckboxes -Profile $selectedRule.Profile
 
         # Set Protocol
         $protocolMap = @{ "Any" = 0; "TCP" = 1; "UDP" = 2; "ICMPv4" = 3; "ICMPv6" = 4 }
@@ -932,8 +1175,19 @@ function Update-EditPanel {
         # Set Ports
         $txtLocalPort.Text = $selectedRule.LocalPort
         $txtRemotePort.Text = $selectedRule.RemotePort
+        $txtRemoteAddress.Text = $selectedRule.RemoteAddress
+        $txtService.Text = $selectedRule.Service
+        $txtTags.Text = $selectedRule.Tags
 
-        Update-Status "Selected: $($selectedRule.DisplayName)" "#0078D4"
+        $btnApplyEdit.IsEnabled = -not $selectedRule.IsGpo
+        $btnDeleteRule.IsEnabled = -not $selectedRule.IsGpo
+
+        if ($selectedRule.IsGpo) {
+            Update-Status "Selected read-only GPO rule: $($selectedRule.DisplayName)" "#FFA500"
+        }
+        else {
+            Update-Status "Selected: $($selectedRule.DisplayName)" "#0078D4"
+        }
     }
 }
 
@@ -951,6 +1205,11 @@ function Apply-RuleChanges {
     }
 
     try {
+        if ($selectedRule.IsGpo) {
+            Update-Status "GPO-delivered rules are read-only in FirewallForge" "#FFA500"
+            return
+        }
+
         Update-Status "Applying changes to: $($selectedRule.DisplayName)" "#FFA500"
 
         $params = @{
@@ -965,9 +1224,7 @@ function Apply-RuleChanges {
 
         # Direction cannot be changed on existing rules, so we skip it
 
-        # Profile
-        $profileValues = @("Any", "Domain", "Private", "Public", "Domain, Private", "Domain, Public", "Private, Public")
-        $params.Profile = $profileValues[$cmbProfile.SelectedIndex]
+        $params.Profile = Get-SelectedProfiles
 
         Set-NetFirewallRule @params -ErrorAction Stop
 
@@ -986,6 +1243,21 @@ function Apply-RuleChanges {
                 Get-NetFirewallRule -Name $selectedRule.Name | Set-NetFirewallPortFilter @portParams -ErrorAction Stop
             }
         }
+
+        $remoteAddress = $txtRemoteAddress.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($remoteAddress)) {
+            $remoteAddress = "Any"
+        }
+        Get-NetFirewallRule -Name $selectedRule.Name | Set-NetFirewallAddressFilter -RemoteAddress $remoteAddress -ErrorAction Stop
+
+        $serviceName = $txtService.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($serviceName)) {
+            $serviceName = "Any"
+        }
+        Get-NetFirewallRule -Name $selectedRule.Name | Set-NetFirewallServiceFilter -Service $serviceName -ErrorAction Stop
+
+        $newDescription = Set-RuleTagsInDescription -Description $selectedRule.Description -Tags $txtTags.Text.Trim()
+        Set-NetFirewallRule -Name $selectedRule.Name -Description $newDescription -ErrorAction Stop
 
         Update-Status "Changes applied successfully" "#00FF00"
         [System.Windows.MessageBox]::Show(
@@ -1022,36 +1294,33 @@ function Delete-SelectedRule {
         return
     }
 
-    $confirmResult = [System.Windows.MessageBox]::Show(
-        "Are you sure you want to delete $($selectedRules.Count) rule(s)?`n`nThis action cannot be undone!",
-        "Confirm Delete",
-        [System.Windows.MessageBoxButton]::YesNo,
-        [System.Windows.MessageBoxImage]::Warning
-    )
+    $deleted = 0
+    $failed = 0
+    $skippedGpo = 0
 
-    if ($confirmResult -eq [System.Windows.MessageBoxResult]::Yes) {
-        $deleted = 0
-        $failed = 0
-
-        foreach ($rule in $selectedRules) {
-            try {
-                Remove-NetFirewallRule -Name $rule.Name -ErrorAction Stop
-                $deleted++
-            }
-            catch {
-                $failed++
-            }
+    foreach ($rule in $selectedRules) {
+        if ($rule.IsGpo) {
+            $skippedGpo++
+            continue
         }
 
-        if ($failed -eq 0) {
-            Update-Status "Deleted $deleted rule(s) successfully" "#00FF00"
+        try {
+            Remove-NetFirewallRule -Name $rule.Name -ErrorAction Stop
+            $deleted++
         }
-        else {
-            Update-Status "Deleted $deleted rule(s), $failed failed" "#FFA500"
+        catch {
+            $failed++
         }
-
-        Get-FirewallRules
     }
+
+    if ($failed -eq 0 -and $skippedGpo -eq 0) {
+        Update-Status "Deleted $deleted rule(s) successfully" "#00FF00"
+    }
+    else {
+        Update-Status "Deleted $deleted rule(s), $failed failed, $skippedGpo GPO skipped" "#FFA500"
+    }
+
+    Get-FirewallRules
 }
 
 function Find-DuplicateRules {
