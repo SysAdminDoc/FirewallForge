@@ -43,6 +43,10 @@ Assert-True ($managerSource -match 'function Enable-OutboundLockdown') "Outbound
 Assert-True ($managerSource -match 'function Restore-LockdownSnapshot') "Lockdown rollback function is missing."
 Assert-True ($managerSource -match 'DefaultOutboundAction Block') "Outbound lockdown does not change the default action."
 Assert-True ($managerSource -match 'function New-LockdownAllowRule') "Essential lockdown allow-rule helper is missing."
+Assert-True ($managerSource -match 'function Test-FirewallRulePriority') "Rule priority evaluator is missing."
+Assert-True ($managerSource -match 'function Test-FirewallRuleFlowMatch') "Rule predicate walk is missing."
+Assert-True ($managerSource -match 'Test-NetConnection') "Rule priority view does not expose endpoint testing."
+Assert-True ($managerSource -match '\$btnRulePriority\.Add_Click') "Rule priority button is not wired."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json

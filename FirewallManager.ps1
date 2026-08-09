@@ -2256,6 +2256,313 @@ function Show-ProgramRuleWizard {
     $wizard.ShowDialog() | Out-Null
 }
 
+function Test-RulePortMatch {
+    param(
+        [string]$RulePort,
+        [string]$FlowPort
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RulePort) -or $RulePort -eq "Any" -or $RulePort -eq "*") {
+        return $true
+    }
+    if ([string]::IsNullOrWhiteSpace($FlowPort) -or $FlowPort -eq "Any" -or $FlowPort -eq "*") {
+        return $true
+    }
+    if ($FlowPort -notmatch '^\d+$') {
+        return $false
+    }
+
+    $port = [int]$FlowPort
+    foreach ($part in ([string]$RulePort -split ',')) {
+        $candidate = $part.Trim()
+        if ($candidate -match '^(\d+)\s*-\s*(\d+)$') {
+            if ($port -ge [int]$Matches[1] -and $port -le [int]$Matches[2]) {
+                return $true
+            }
+        }
+        elseif ($candidate -match '^\d+$' -and $port -eq [int]$candidate) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-RuleAddressMatch {
+    param(
+        [string]$RuleAddress,
+        [string]$FlowAddress
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RuleAddress) -or $RuleAddress -eq "Any" -or $RuleAddress -eq "*") {
+        return $true
+    }
+    if ([string]::IsNullOrWhiteSpace($FlowAddress) -or $FlowAddress -eq "Any" -or $FlowAddress -eq "*") {
+        return $true
+    }
+
+    try {
+        $flowIp = [System.Net.IPAddress]::Parse($FlowAddress)
+    }
+    catch {
+        return @($RuleAddress -split ',') | Where-Object { $_.Trim() -ieq $FlowAddress } | Select-Object -First 1
+    }
+
+    foreach ($candidate in ([string]$RuleAddress -split ',')) {
+        $address = $candidate.Trim()
+        if ($address -ieq $FlowAddress) {
+            return $true
+        }
+        if ($address -notmatch '^(.+)/(\d{1,3})$') {
+            continue
+        }
+
+        try {
+            $network = [System.Net.IPAddress]::Parse($Matches[1])
+            $prefix = [int]$Matches[2]
+            $networkBytes = $network.GetAddressBytes()
+            $flowBytes = $flowIp.GetAddressBytes()
+            if ($networkBytes.Length -ne $flowBytes.Length -or $prefix -lt 0 -or $prefix -gt ($networkBytes.Length * 8)) {
+                continue
+            }
+
+            $fullBytes = [math]::Floor($prefix / 8)
+            $remainingBits = $prefix % 8
+            $matchesNetwork = $true
+            for ($i = 0; $i -lt $fullBytes; $i++) {
+                if ($networkBytes[$i] -ne $flowBytes[$i]) {
+                    $matchesNetwork = $false
+                    break
+                }
+            }
+            if ($matchesNetwork -and $remainingBits -gt 0) {
+                $mask = [byte](0xFF -shl (8 - $remainingBits))
+                if (($networkBytes[$fullBytes] -band $mask) -ne ($flowBytes[$fullBytes] -band $mask)) {
+                    $matchesNetwork = $false
+                }
+            }
+            if ($matchesNetwork) {
+                return $true
+            }
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $false
+}
+
+function Test-FirewallRuleFlowMatch {
+    param(
+        [object]$Rule,
+        [object]$Flow
+    )
+
+    if ($Rule.Enabled -eq "False" -or $Rule.Direction -ne $Flow.Direction) {
+        return $false
+    }
+    if ($Rule.Profile -and $Rule.Profile -ne "Any" -and $Rule.Profile -notmatch [regex]::Escape($Flow.Profile)) {
+        return $false
+    }
+    if ($Rule.Program -and $Rule.Program -ne "Any" -and $Flow.Program -ne "Any" -and $Rule.Program -ine $Flow.Program) {
+        return $false
+    }
+    if ($Rule.Protocol -and $Rule.Protocol -ne "Any" -and $Flow.Protocol -ne "Any" -and $Rule.Protocol -ine $Flow.Protocol) {
+        return $false
+    }
+    if (-not (Test-RulePortMatch -RulePort $Rule.LocalPort -FlowPort $Flow.LocalPort)) {
+        return $false
+    }
+    if (-not (Test-RulePortMatch -RulePort $Rule.RemotePort -FlowPort $Flow.RemotePort)) {
+        return $false
+    }
+    if (-not (Test-RuleAddressMatch -RuleAddress $Rule.RemoteAddress -FlowAddress $Flow.RemoteAddress)) {
+        return $false
+    }
+
+    return $true
+}
+
+function Get-FirewallRuleSpecificity {
+    param([object]$Rule)
+
+    $score = 10 # Direction is an exact predicate for every candidate.
+    if ($Rule.Profile -and $Rule.Profile -ne "Any") { $score += 4 }
+    if ($Rule.Program -and $Rule.Program -ne "Any") { $score += 8 }
+    if ($Rule.Protocol -and $Rule.Protocol -ne "Any") { $score += 3 }
+    if ($Rule.LocalPort -and $Rule.LocalPort -ne "Any") { $score += 3 }
+    if ($Rule.RemotePort -and $Rule.RemotePort -ne "Any") { $score += 3 }
+    if ($Rule.RemoteAddress -and $Rule.RemoteAddress -ne "Any") { $score += 5 }
+    if ($Rule.Service -and $Rule.Service -ne "Any") { $score += 3 }
+    if ($Rule.IsGpo) { $score += 2 }
+    if ($Rule.Action -eq "Block") { $score += 1 }
+    return $score
+}
+
+function Show-RulePriorityInput {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Test Firewall Rule Priority"
+    $dialog.Width = 620
+    $dialog.Height = 520
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = $null
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    for ($rowIndex = 0; $rowIndex -lt 9; $rowIndex++) {
+        $rowDefinition = New-Object System.Windows.Controls.RowDefinition
+        $rowDefinition.Height = [System.Windows.GridLength]::Auto
+        $grid.RowDefinitions.Add($rowDefinition)
+    }
+    $labelColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $labelColumn.Width = New-Object System.Windows.GridLength(140)
+    $grid.ColumnDefinitions.Add($labelColumn)
+    $inputColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $inputColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.ColumnDefinitions.Add($inputColumn)
+
+    $controls = @{}
+    $fieldDefinitions = @(
+        @{ Label = "Direction"; Name = "Direction"; Type = "Combo"; Values = @("Inbound", "Outbound"); Default = "Outbound" }
+        @{ Label = "Profile"; Name = "Profile"; Type = "Combo"; Values = @("Domain", "Private", "Public"); Default = "Private" }
+        @{ Label = "Program"; Name = "Program"; Type = "Text"; Default = "Any" }
+        @{ Label = "Protocol"; Name = "Protocol"; Type = "Combo"; Values = @("Any", "TCP", "UDP", "ICMPv4", "ICMPv6"); Default = "TCP" }
+        @{ Label = "Local port"; Name = "LocalPort"; Type = "Text"; Default = "Any" }
+        @{ Label = "Remote port"; Name = "RemotePort"; Type = "Text"; Default = "443" }
+        @{ Label = "Remote address"; Name = "RemoteAddress"; Type = "Text"; Default = "Any" }
+    )
+
+    for ($i = 0; $i -lt $fieldDefinitions.Count; $i++) {
+        $definition = $fieldDefinitions[$i]
+        $label = New-Object System.Windows.Controls.Label
+        $label.Content = $definition.Label
+        [System.Windows.Controls.Grid]::SetRow($label, $i)
+        [System.Windows.Controls.Grid]::SetColumn($label, 0)
+        $grid.Children.Add($label) | Out-Null
+
+        if ($definition.Type -eq "Combo") {
+            $control = New-Object System.Windows.Controls.ComboBox
+            foreach ($value in $definition.Values) {
+                $control.Items.Add($value) | Out-Null
+            }
+            $control.SelectedItem = $definition.Default
+        }
+        else {
+            $control = New-Object System.Windows.Controls.TextBox
+            $control.Text = $definition.Default
+        }
+        $control.Margin = New-Object System.Windows.Thickness(5, 3, 5, 3)
+        $controls[$definition.Name] = $control
+        [System.Windows.Controls.Grid]::SetRow($control, $i)
+        [System.Windows.Controls.Grid]::SetColumn($control, 1)
+        $grid.Children.Add($control) | Out-Null
+    }
+
+    $reachability = New-Object System.Windows.Controls.CheckBox
+    $reachability.Content = "Run Test-NetConnection for a concrete remote address and port"
+    $reachability.Margin = New-Object System.Windows.Thickness(5, 8, 5, 8)
+    [System.Windows.Controls.Grid]::SetRow($reachability, 7)
+    [System.Windows.Controls.Grid]::SetColumn($reachability, 1)
+    $grid.Children.Add($reachability) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    [System.Windows.Controls.Grid]::SetRow($buttons, 8)
+    [System.Windows.Controls.Grid]::SetColumn($buttons, 1)
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 100
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $evaluate = New-Object System.Windows.Controls.Button
+    $evaluate.Content = "Evaluate Rules"
+    $evaluate.Width = 140
+    $evaluate.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $evaluate.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $evaluate.Add_Click({
+        $dialog.Tag = [PSCustomObject]@{
+            Direction = [string]$controls.Direction.SelectedItem
+            Profile = [string]$controls.Profile.SelectedItem
+            Program = [string]$controls.Program.Text.Trim()
+            Protocol = [string]$controls.Protocol.SelectedItem
+            LocalPort = [string]$controls.LocalPort.Text.Trim()
+            RemotePort = [string]$controls.RemotePort.Text.Trim()
+            RemoteAddress = [string]$controls.RemoteAddress.Text.Trim()
+            RunReachability = [bool]$reachability.IsChecked
+        }
+        $dialog.Close()
+    }.GetNewClosure())
+    $buttons.Children.Add($evaluate) | Out-Null
+    $grid.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $grid
+    $dialog.ShowDialog() | Out-Null
+    return $dialog.Tag
+}
+
+function Test-FirewallRulePriority {
+    $flow = Show-RulePriorityInput
+    if ($null -eq $flow) {
+        return
+    }
+
+    if ($flow.Program -eq "") { $flow.Program = "Any" }
+    if ($flow.LocalPort -eq "") { $flow.LocalPort = "Any" }
+    if ($flow.RemotePort -eq "") { $flow.RemotePort = "Any" }
+    if ($flow.RemoteAddress -eq "") { $flow.RemoteAddress = "Any" }
+
+    $matchingRules = @($Script:AllRules | Where-Object {
+        Test-FirewallRuleFlowMatch -Rule $_ -Flow $flow
+    } | Sort-Object @{ Expression = { Get-FirewallRuleSpecificity -Rule $_ }; Descending = $true }, @{ Expression = { $_.Action -eq "Block" }; Descending = $true })
+
+    $report = New-Object System.Text.StringBuilder
+    [void]$report.AppendLine("FIREWALL RULE PRIORITY VIEW (APPROXIMATE)")
+    [void]$report.AppendLine("=" * 72)
+    [void]$report.AppendLine("Flow: $($flow.Direction) / $($flow.Protocol) / $($flow.Program)")
+    [void]$report.AppendLine("Profile: $($flow.Profile), Local port: $($flow.LocalPort), Remote: $($flow.RemoteAddress):$($flow.RemotePort)")
+    [void]$report.AppendLine("")
+
+    if ($matchingRules.Count -eq 0) {
+        [void]$report.AppendLine("No enabled rules in the loaded rule set match this flow.")
+    }
+    else {
+        [void]$report.AppendLine("Matching rules (highest estimated specificity first):")
+        $rank = 0
+        foreach ($rule in $matchingRules) {
+            $rank++
+            $gpo = if ($rule.IsGpo) { ", GPO" } else { "" }
+            [void]$report.AppendLine(("{0,2}. [{1}] {2} (score {3}{4})" -f $rank, $rule.Action.ToUpperInvariant(), $rule.DisplayName, (Get-FirewallRuleSpecificity -Rule $rule), $gpo))
+            [void]$report.AppendLine("    $($rule.Direction), Profile=$($rule.Profile), Protocol=$($rule.Protocol), Program=$($rule.Program), Ports=$($rule.LocalPort)->$($rule.RemotePort), Remote=$($rule.RemoteAddress)")
+        }
+        $winner = $matchingRules[0]
+        [void]$report.AppendLine("")
+        [void]$report.AppendLine("Estimated winning action: $($winner.Action) via '$($winner.DisplayName)'")
+    }
+
+    if ($flow.RunReachability -and $flow.RemoteAddress -notmatch "^(Any|\*|$)" -and $flow.RemoteAddress -notmatch "[,/]" -and $flow.RemotePort -match '^\d+$') {
+        try {
+            $reachable = Test-NetConnection -ComputerName $flow.RemoteAddress -Port ([int]$flow.RemotePort) -InformationLevel Quiet -WarningAction SilentlyContinue
+            [void]$report.AppendLine("")
+            [void]$report.AppendLine("Test-NetConnection: $(if ($reachable) { 'reachable' } else { 'not reachable' })")
+        }
+        catch {
+            [void]$report.AppendLine("")
+            [void]$report.AppendLine("Test-NetConnection failed: $($_.Exception.Message)")
+        }
+    }
+    else {
+        [void]$report.AppendLine("")
+        [void]$report.AppendLine("Test-NetConnection: not run (use a concrete address/port and enable the option to run it).")
+    }
+
+    [void]$report.AppendLine("")
+    [void]$report.AppendLine("Windows can apply additional precedence from policy stores, GPO, interface/service filters, and block-rule semantics; use this list as an explainable predicate walk, not a kernel verdict.")
+    Show-ReportWindow -Title "Firewall Rule Priority" -Text $report.ToString() -Width 900 -Height 650
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -2281,6 +2588,7 @@ $btnRollbackLockdown.Add_Click({
             [System.Windows.MessageBoxImage]::Error) | Out-Null
     }
 })
+$btnRulePriority.Add_Click({ Test-FirewallRulePriority })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
