@@ -3137,6 +3137,274 @@ function Show-IPv6CoverageAudit {
     Show-ReportWindow -Title "IPv6 Coverage Audit" -Text $report.ToString() -Width 900 -Height 650
 }
 
+function Get-SavedViewRecords {
+    if (-not (Test-Path -LiteralPath $Script:ViewsFolder)) {
+        New-Item -ItemType Directory -Path $Script:ViewsFolder -Force | Out-Null
+    }
+    $records = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($file in @(Get-ChildItem -LiteralPath $Script:ViewsFolder -Filter "*.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        try {
+            $view = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $records.Add([PSCustomObject]@{ Name = if ($view.Name) { $view.Name } else { $file.BaseName }; Path = $file.FullName; View = $view })
+        }
+        catch {
+            # Ignore malformed views so one bad file cannot break the view picker.
+        }
+    }
+    return $records
+}
+
+function Show-ViewNameInput {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Save Firewall View"
+    $dialog.Width = 420
+    $dialog.Height = 190
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.ResizeMode = "NoResize"
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = $null
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+    $label = New-Object System.Windows.Controls.Label
+    $label.Content = "View name"
+    $panel.Children.Add($label) | Out-Null
+    $nameBox = New-Object System.Windows.Controls.TextBox
+    $nameBox.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($nameBox) | Out-Null
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 90
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $save = New-Object System.Windows.Controls.Button
+    $save.Content = "Save"
+    $save.Width = 90
+    $save.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+    $save.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $save.Add_Click({
+        if (-not [string]::IsNullOrWhiteSpace($nameBox.Text)) {
+            $dialog.Tag = $nameBox.Text.Trim()
+            $dialog.Close()
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($save) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
+function Get-CurrentSavedViewDefinition {
+    $columns = @($dgRules.Columns | ForEach-Object {
+        [ordered]@{
+            Header = [string]$_.Header
+            Visibility = $_.Visibility.ToString()
+            DisplayIndex = [int]$_.DisplayIndex
+            Width = [double]$_.Width.Value
+            WidthUnitType = $_.Width.UnitType.ToString()
+        }
+    })
+    $collectionView = [System.Windows.Data.CollectionViewSource]::GetDefaultCollectionView($dgRules.ItemsSource)
+    $sorts = @()
+    if ($collectionView -and $collectionView.SortDescriptions) {
+        $sorts = @($collectionView.SortDescriptions | ForEach-Object {
+            [ordered]@{ PropertyName = $_.PropertyName; Direction = $_.Direction.ToString() }
+        })
+    }
+    return [ordered]@{
+        Name = ""
+        SavedDate = (Get-Date).ToString("o")
+        Search = $txtSearch.Text
+        Group = [string]$cmbGroupFilter.SelectedItem
+        Regex = [bool]$chkRegexSearch.IsChecked
+        Columns = $columns
+        SortDescriptions = $sorts
+    }
+}
+
+function Apply-SavedView {
+    param([object]$View)
+
+    $txtSearch.Text = if ($null -ne $View.Search) { [string]$View.Search } else { "" }
+    $chkRegexSearch.IsChecked = [bool]$View.Regex
+    $groupName = if ($View.Group) { [string]$View.Group } else { "(All Groups)" }
+    if (@($cmbGroupFilter.Items | Where-Object { [string]$_ -eq $groupName }).Count -gt 0) {
+        $cmbGroupFilter.SelectedItem = $groupName
+    }
+    else {
+        $cmbGroupFilter.SelectedIndex = 0
+    }
+
+    $savedColumns = @($View.Columns | Sort-Object DisplayIndex)
+    $targetIndex = 0
+    foreach ($savedColumn in $savedColumns) {
+        $column = @($dgRules.Columns | Where-Object { [string]$_.Header -eq [string]$savedColumn.Header }) | Select-Object -First 1
+        if ($null -eq $column) { continue }
+        try {
+            $column.Visibility = [System.Windows.Visibility]::Parse([string]$savedColumn.Visibility)
+        }
+        catch {
+            $column.Visibility = [System.Windows.Visibility]::Visible
+        }
+        if ([int]$savedColumn.DisplayIndex -ge 0) {
+            try { $column.DisplayIndex = $targetIndex } catch { }
+            $targetIndex++
+        }
+        try {
+            $unitType = [System.Windows.Controls.DataGridLengthUnitType]::Parse([string]$savedColumn.WidthUnitType)
+            $column.Width = New-Object System.Windows.Controls.DataGridLength([double]$savedColumn.Width, $unitType)
+        }
+        catch {
+            # Keep the current width if the saved value is not valid for this WPF version.
+        }
+    }
+
+    $collectionView = [System.Windows.Data.CollectionViewSource]::GetDefaultCollectionView($dgRules.ItemsSource)
+    if ($collectionView -and $collectionView.SortDescriptions) {
+        $collectionView.SortDescriptions.Clear()
+        foreach ($sort in @($View.SortDescriptions)) {
+            $direction = if ([string]$sort.Direction -eq "Descending") { [System.ComponentModel.ListSortDirection]::Descending } else { [System.ComponentModel.ListSortDirection]::Ascending }
+            $collectionView.SortDescriptions.Add((New-Object System.ComponentModel.SortDescription([string]$sort.PropertyName, $direction)))
+        }
+    }
+    Search-Rules
+}
+
+function Show-SavedViews {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Saved Firewall Views"
+    $dialog.Width = 720
+    $dialog.Height = 500
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    $contentRow = New-Object System.Windows.Controls.RowDefinition
+    $contentRow.Height = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($contentRow)
+    $buttonRow = New-Object System.Windows.Controls.RowDefinition
+    $buttonRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($buttonRow)
+    $listColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $listColumn.Width = New-Object System.Windows.GridLength(220)
+    $grid.ColumnDefinitions.Add($listColumn)
+    $previewColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $previewColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.ColumnDefinitions.Add($previewColumn)
+
+    $list = New-Object System.Windows.Controls.ListBox
+    [System.Windows.Controls.Grid]::SetRow($list, 0)
+    [System.Windows.Controls.Grid]::SetColumn($list, 0)
+    $grid.Children.Add($list) | Out-Null
+    $preview = New-Object System.Windows.Controls.TextBox
+    $preview.IsReadOnly = $true
+    $preview.AcceptsReturn = $true
+    $preview.VerticalScrollBarVisibility = "Auto"
+    $preview.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $preview.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $preview.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $preview.Margin = New-Object System.Windows.Thickness(12, 0, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($preview, 0)
+    [System.Windows.Controls.Grid]::SetColumn($preview, 1)
+    $grid.Children.Add($preview) | Out-Null
+
+    $state = @{ Records = @() }
+    $refresh = {
+        $state.Records = @(Get-SavedViewRecords)
+        $list.Items.Clear()
+        foreach ($record in $state.Records) { $list.Items.Add($record.Name) | Out-Null }
+        if ($state.Records.Count -gt 0) { $list.SelectedIndex = 0 } else { $preview.Text = "No saved views yet." }
+    }.GetNewClosure()
+    $getSelected = {
+        if ($list.SelectedIndex -lt 0 -or $list.SelectedIndex -ge $state.Records.Count) { return $null }
+        return $state.Records[$list.SelectedIndex]
+    }.GetNewClosure()
+    $list.Add_SelectionChanged({
+        $record = & $getSelected
+        if ($record) {
+            $preview.Text = @(
+                "View: $($record.Name)"
+                "Saved: $($record.View.SavedDate)"
+                "Search: $($record.View.Search)"
+                "Group: $($record.View.Group)"
+                "Regex: $($record.View.Regex)"
+                "Columns: $(@($record.View.Columns).Count)"
+                "Sorts: $(@($record.View.SortDescriptions).Count)"
+            ) -join [Environment]::NewLine
+        }
+    }.GetNewClosure())
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    [System.Windows.Controls.Grid]::SetRow($buttons, 1)
+    [System.Windows.Controls.Grid]::SetColumnSpan($buttons, 2)
+    $save = New-Object System.Windows.Controls.Button
+    $save.Content = "Save Current"
+    $save.Width = 115
+    $save.Add_Click({
+        $name = Show-ViewNameInput
+        if ($name) {
+            $safeName = ($name -replace '[\\/:*?"<>|]', '_').Trim()
+            $view = Get-CurrentSavedViewDefinition
+            $view.Name = $name
+            $path = Join-Path $Script:ViewsFolder "$safeName.json"
+            if (Test-Path -LiteralPath $path) {
+                $confirm = [System.Windows.MessageBox]::Show("Replace saved view '$name'?", "Replace View", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+                if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
+            }
+            $view | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding UTF8
+            & $refresh
+            Update-Status "Saved view '$name'" "#00FF00"
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($save) | Out-Null
+    $apply = New-Object System.Windows.Controls.Button
+    $apply.Content = "Apply Selected"
+    $apply.Width = 120
+    $apply.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+    $apply.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $apply.Add_Click({
+        $record = & $getSelected
+        if ($record) {
+            Apply-SavedView -View $record.View
+            Update-Status "Applied view '$($record.Name)'" "#00FF00"
+            $dialog.Close()
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($apply) | Out-Null
+    $delete = New-Object System.Windows.Controls.Button
+    $delete.Content = "Delete"
+    $delete.Width = 90
+    $delete.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xD3, 0x2F, 0x2F))
+    $delete.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $delete.Add_Click({
+        $record = & $getSelected
+        if ($record) {
+            $confirm = [System.Windows.MessageBox]::Show("Delete saved view '$($record.Name)'?", "Delete View", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Warning)
+            if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+                Remove-Item -LiteralPath $record.Path -Force
+                & $refresh
+            }
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($delete) | Out-Null
+    $close = New-Object System.Windows.Controls.Button
+    $close.Content = "Close"
+    $close.Width = 90
+    $close.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($close) | Out-Null
+    $grid.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $grid
+    & $refresh
+    $dialog.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -3167,6 +3435,7 @@ $btnGroupOps.Add_Click({ Show-GroupOperations })
 $btnLogViewer.Add_Click({ Show-FirewallLogViewer })
 $btnScheduleBackups.Add_Click({ Show-ScheduledBackupDialog })
 $btnAuditRules.Add_Click({ Show-IPv6CoverageAudit })
+$btnSavedViews.Add_Click({ Show-SavedViews })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
