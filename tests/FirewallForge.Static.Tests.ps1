@@ -59,6 +59,10 @@ $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
 Assert-True ($editorSource -match 'function Compare-BackupRuleSets') "Two-backup diff engine is missing."
 Assert-True ($editorSource -match '\$btnCompareBackups\.Add_Click') "Two-backup comparison button is not wired."
+Assert-True ($editorSource -match 'function Show-MergeStrategyPicker') "Merge strategy picker is missing."
+Assert-True ($editorSource -match 'Prefer newer') "Prefer-newer merge strategy is missing."
+Assert-True ($editorSource -match 'Manual conflict') "Manual merge strategy is missing."
+Assert-True ($editorSource -match 'function Resolve-MergeConflict') "Manual merge conflict resolver is missing."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json

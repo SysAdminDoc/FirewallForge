@@ -505,6 +505,7 @@ $txtNewPort = $Window.FindName("txtNewPort")
 $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
 $Script:FilteredView = $null
 $Script:OriginalRules = $null  # Snapshot at import time for diff
+$Script:CurrentBackupDate = $null
 
 # ============================================================
 # Rule Class using PowerShell class (avoids C# assembly issues)
@@ -604,6 +605,7 @@ function Import-FWBackup {
 
             $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
             $Script:FilteredView = $null
+            $Script:CurrentBackupDate = if ($backup.BackupDate) { [string]$backup.BackupDate } else { $null }
 
             $ruleData = if ($backup.RuleDetails) { $backup.RuleDetails } else { $backup }
 
@@ -665,6 +667,7 @@ function Import-CSV {
 
             $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()
             $Script:FilteredView = $null
+            $Script:CurrentBackupDate = $null
 
             foreach ($r in $csvData) {
                 $rule = New-RuleObject `
@@ -703,6 +706,161 @@ function Import-CSV {
     }
 }
 
+function Get-RuleMergeDifferences {
+    param(
+        [object]$Current,
+        [object]$Imported
+    )
+
+    $properties = @("DisplayName", "Description", "Direction", "Action", "Enabled", "Profile", "Protocol", "LocalPort", "RemotePort", "Program")
+    foreach ($property in $properties) {
+        $currentValue = [string]$Current.$property
+        $importedValue = [string]$Imported.$property
+        if ($currentValue -ne $importedValue) {
+            "  $property : $currentValue -> $importedValue"
+        }
+    }
+}
+
+function Show-MergeStrategyPicker {
+    param(
+        [int]$ConflictCount,
+        [string]$ImportedDate,
+        [string]$CurrentDate
+    )
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Choose Merge Conflict Strategy"
+    $dialog.Width = 560
+    $dialog.Height = 300
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = $null
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+    $heading = New-Object System.Windows.Controls.TextBlock
+    $heading.Text = "$ConflictCount conflicting rule(s) found"
+    $heading.FontSize = 18
+    $heading.FontWeight = "Bold"
+    $heading.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $heading.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $panel.Children.Add($heading) | Out-Null
+
+    $details = New-Object System.Windows.Controls.TextBlock
+    $details.Text = "Imported backup: $ImportedDate`nCurrent backup: $CurrentDate`n`nChoose how conflicting rules should be applied. Manual conflict asks for a decision on each rule."
+    $details.TextWrapping = "Wrap"
+    $details.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $details.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $panel.Children.Add($details) | Out-Null
+
+    $strategyCombo = New-Object System.Windows.Controls.ComboBox
+    foreach ($strategy in @("Prefer newer", "Prefer imported", "Manual conflict")) {
+        $strategyCombo.Items.Add($strategy) | Out-Null
+    }
+    $strategyCombo.SelectedIndex = 0
+    $strategyCombo.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($strategyCombo) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 100
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $apply = New-Object System.Windows.Controls.Button
+    $apply.Content = "Continue Merge"
+    $apply.Width = 130
+    $apply.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $apply.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $apply.Add_Click({ $dialog.Tag = [string]$strategyCombo.SelectedItem; $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($apply) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
+function Resolve-MergeConflict {
+    param(
+        [object]$Current,
+        [object]$Imported,
+        [string[]]$Changes
+    )
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Resolve Rule Conflict"
+    $dialog.Width = 760
+    $dialog.Height = 460
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = "Skip"
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    $contentRow = New-Object System.Windows.Controls.RowDefinition
+    $contentRow.Height = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($contentRow)
+    $buttonRow = New-Object System.Windows.Controls.RowDefinition
+    $buttonRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($buttonRow)
+
+    $text = New-Object System.Windows.Controls.TextBox
+    $text.IsReadOnly = $true
+    $text.AcceptsReturn = $true
+    $text.VerticalScrollBarVisibility = "Auto"
+    $text.HorizontalScrollBarVisibility = "Auto"
+    $text.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $text.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $text.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $text.Text = @(
+        "CONFLICT: $($Current.DisplayName)"
+        "Rule name: $($Current.Name)"
+        ""
+        "CURRENT VALUES"
+        "  Action=$($Current.Action), Enabled=$($Current.Enabled), Profile=$($Current.Profile), Protocol=$($Current.Protocol)"
+        "  Ports=$($Current.LocalPort)->$($Current.RemotePort), Program=$($Current.Program)"
+        ""
+        "IMPORTED VALUES"
+        "  Action=$($Imported.Action), Enabled=$($Imported.Enabled), Profile=$($Imported.Profile), Protocol=$($Imported.Protocol)"
+        "  Ports=$($Imported.LocalPort)->$($Imported.RemotePort), Program=$($Imported.Program)"
+        ""
+        "CHANGES"
+    ) -join [Environment]::NewLine
+    $text.Text += [Environment]::NewLine + ($Changes -join [Environment]::NewLine)
+    [System.Windows.Controls.Grid]::SetRow($text, 0)
+    $grid.Children.Add($text) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    foreach ($choice in @(
+        @{ Label = "Keep Current"; Value = "Keep current"; Color = @(0x55, 0x55, 0x55); Width = 120 }
+        @{ Label = "Use Imported"; Value = "Use imported"; Color = @(0x38, 0x8E, 0x3C); Width = 120 }
+        @{ Label = "Skip"; Value = "Skip"; Color = @(0xD3, 0x2F, 0x2F); Width = 90 }
+    )) {
+        $button = New-Object System.Windows.Controls.Button
+        $button.Content = $choice.Label
+        $button.Width = $choice.Width
+        $button.Margin = New-Object System.Windows.Thickness(5, 10, 0, 0)
+        $rgb = $choice.Color
+        $button.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb($rgb[0], $rgb[1], $rgb[2]))
+        $button.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+        $value = $choice.Value
+        $button.Add_Click({ $dialog.Tag = $value; $dialog.Close() }.GetNewClosure())
+        $buttons.Children.Add($button) | Out-Null
+    }
+    [System.Windows.Controls.Grid]::SetRow($buttons, 1)
+    $grid.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $grid
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
 function Merge-FWBackup {
     if ($Script:AllRules.Count -eq 0) {
         [System.Windows.MessageBox]::Show(
@@ -718,70 +876,120 @@ function Merge-FWBackup {
     $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
     $openDialog.Title = "Merge Firewall Backup"
 
-    if ($openDialog.ShowDialog()) {
-        try {
-            Update-Status "Merging backup..."
-            $content = Get-Content $openDialog.FileName -Raw -Encoding UTF8
-            $backup = $content | ConvertFrom-Json
+    if (-not $openDialog.ShowDialog()) {
+        return
+    }
 
-            $ruleData = if ($backup.RuleDetails) { $backup.RuleDetails } else { $backup }
+    try {
+        Update-Status "Reading backup for merge..."
+        $incomingData = Read-BackupRuleSet -Path $openDialog.FileName
+        $incomingRules = @($incomingData.Rules)
+        $existingByName = @{}
+        foreach ($rule in $Script:AllRules) {
+            $existingByName[$rule.Name] = $rule
+        }
 
-            # Build a set of existing rule names for dedup
-            $existingNames = @{}
-            foreach ($r in $Script:AllRules) {
-                $existingNames[$r.Name] = $true
-            }
-
-            $added = 0
-            $skipped = 0
-            foreach ($r in $ruleData) {
-                $ruleName = $r.Name
-                if ($existingNames.ContainsKey($ruleName)) {
-                    $skipped++
-                    continue
+        $conflicts = @()
+        foreach ($incomingRule in $incomingRules) {
+            if ($existingByName.ContainsKey($incomingRule.Name)) {
+                $currentRule = $existingByName[$incomingRule.Name]
+                if ((Get-RuleMergeDifferences -Current $currentRule -Imported $incomingRule).Count -gt 0) {
+                    $conflicts += $incomingRule
                 }
+            }
+        }
 
-                $rule = New-RuleObject `
-                    -Name $r.Name `
-                    -DisplayName $r.DisplayName `
-                    -Description $r.Description `
-                    -Direction $r.Direction `
-                    -Action $r.Action `
-                    -Enabled $r.Enabled `
-                    -Profile $r.Profile `
-                    -Protocol $r.Protocol `
-                    -LocalPort $r.LocalPort `
-                    -RemotePort $r.RemotePort `
-                    -Program $r.Program `
-                    -Selected $true
+        $strategy = "Prefer imported"
+        if ($conflicts.Count -gt 0) {
+            $strategy = Show-MergeStrategyPicker -ConflictCount $conflicts.Count `
+                -ImportedDate $incomingData.Backup.BackupDate -CurrentDate $Script:CurrentBackupDate
+            if ([string]::IsNullOrWhiteSpace($strategy)) {
+                Update-Status "Merge cancelled"
+                return
+            }
+        }
 
-                $Script:AllRules.Add($rule)
+        $importedDate = [datetime]::MinValue
+        $currentDate = [datetime]::MinValue
+        $parsedDate = $null
+        if ($incomingData.Backup.BackupDate -and [datetime]::TryParse([string]$incomingData.Backup.BackupDate, [ref]$parsedDate)) {
+            $importedDate = $parsedDate
+        }
+        $parsedDate = $null
+        if ($Script:CurrentBackupDate -and [datetime]::TryParse([string]$Script:CurrentBackupDate, [ref]$parsedDate)) {
+            $currentDate = $parsedDate
+        }
+
+        $added = 0
+        $replaced = 0
+        $skipped = 0
+        $manualSkipped = 0
+        foreach ($incomingRule in $incomingRules) {
+            if (-not $existingByName.ContainsKey($incomingRule.Name)) {
+                $incomingRule.Selected = $true
+                $Script:AllRules.Add($incomingRule)
+                $existingByName[$incomingRule.Name] = $incomingRule
                 $added++
+                continue
             }
 
-            # Refresh grid
-            $Script:FilteredView = $null
-            $dgRules.ItemsSource = $null
-            $dgRules.ItemsSource = $Script:AllRules
-            Update-Counts
-            Update-Status "Merged: $added new rules added, $skipped duplicates skipped"
+            $currentRule = $existingByName[$incomingRule.Name]
+            $differences = @(Get-RuleMergeDifferences -Current $currentRule -Imported $incomingRule)
+            if ($differences.Count -eq 0) {
+                $skipped++
+                continue
+            }
 
-            [System.Windows.MessageBox]::Show(
-                "Merge complete!`n`nNew rules added: $added`nDuplicates skipped: $skipped`nTotal rules: $($Script:AllRules.Count)",
-                "Merge Complete",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Information
-            )
+            $decision = $strategy
+            if ($strategy -eq "Prefer newer") {
+                $decision = if ($importedDate -gt $currentDate) { "Use imported" } else { "Keep current" }
+            }
+            elseif ($strategy -eq "Prefer imported") {
+                $decision = "Use imported"
+            }
+            else {
+                $decision = Resolve-MergeConflict -Current $currentRule -Imported $incomingRule -Changes $differences
+            }
+
+            if ($decision -eq "Use imported") {
+                $incomingRule.Selected = $currentRule.Selected
+                $index = $Script:AllRules.IndexOf($currentRule)
+                if ($index -ge 0) {
+                    $Script:AllRules[$index] = $incomingRule
+                    $existingByName[$incomingRule.Name] = $incomingRule
+                    $replaced++
+                }
+            }
+            elseif ($decision -eq "Keep current") {
+                $skipped++
+            }
+            else {
+                $manualSkipped++
+            }
         }
-        catch {
-            Update-Status "Merge failed: $($_.Exception.Message)"
-            [System.Windows.MessageBox]::Show(
-                "Failed to merge backup.`n`nError: $($_.Exception.Message)",
-                "Merge Error",
-                [System.Windows.MessageBoxButton]::OK,
-                [System.Windows.MessageBoxImage]::Error
-            )
+
+        if ($importedDate -gt $currentDate -and $importedDate -ne [datetime]::MinValue) {
+            $Script:CurrentBackupDate = $incomingData.Backup.BackupDate
         }
+        $Script:FilteredView = $null
+        $dgRules.ItemsSource = $null
+        $dgRules.ItemsSource = $Script:AllRules
+        Update-Counts
+        Update-Status "Merge complete: $added added, $replaced replaced, $skipped kept, $manualSkipped manually skipped"
+
+        [System.Windows.MessageBox]::Show(
+            "Merge complete!`n`nNew rules added: $added`nConflicts replaced: $replaced`nExisting rules kept: $skipped`nManual conflicts skipped: $manualSkipped`nTotal rules: $($Script:AllRules.Count)",
+            "Merge Complete",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information) | Out-Null
+    }
+    catch {
+        Update-Status "Merge failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Failed to merge backup.`n`nError: $($_.Exception.Message)",
+            "Merge Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
     }
 }
 
