@@ -52,6 +52,12 @@ Assert-True ($managerSource -match 'Allow Out') "Program wizard outbound preset 
 Assert-True ($managerSource -match 'function Toggle-ConnectionMonitor') "Connection monitor toggle is missing."
 Assert-True ($managerSource -match 'Id = @\(5156, 5157\)') "Connection monitor event query is missing 5156/5157."
 Assert-True ($managerSource -match '\$btnConnectionMonitor\.Add_Click') "Connection monitor button is not wired."
+Assert-True ($managerSource -match 'function Convert-DnsClientQueryEvent') "DNS client event parser is missing."
+Assert-True ($managerSource -match 'function Get-DnsClientQueryEvents') "DNS client event reader is missing."
+Assert-True ($managerSource -match 'function Get-DnsCorrelationRecords') "DNS correlation engine is missing."
+Assert-True ($managerSource -match 'Microsoft-Windows-DNS-Client/Operational') "DNS client operational log path is missing."
+Assert-True ($managerSource -match 'Id = 3008') "DNS client query-completed event query is missing."
+Assert-True ($managerSource -match '\$btnDnsCorrelation\.Add_Click') "DNS correlation button is not wired."
 Assert-True ($managerSource -match 'function Enable-OutboundLockdown') "Outbound lockdown function is missing."
 Assert-True ($managerSource -match 'function Restore-LockdownSnapshot') "Lockdown rollback function is missing."
 Assert-True ($managerSource -match 'DefaultOutboundAction Block') "Outbound lockdown does not change the default action."
@@ -82,6 +88,44 @@ Assert-True ($managerSource -match '\$btnSavedViews\.Add_Click') "Saved views bu
 Assert-True ($managerSource -match 'function Show-BulkTagsDialog') "Bulk tags dialog is missing."
 Assert-True ($managerSource -match 'Append tags') "Bulk tag append mode is missing."
 Assert-True ($managerSource -match '\$btnBulkTags\.Add_Click') "Bulk tags button is not wired."
+
+$managerTokens = $null
+$managerParseErrors = $null
+$managerAst = [System.Management.Automation.Language.Parser]::ParseFile($managerPath, [ref]$managerTokens, [ref]$managerParseErrors)
+$dnsFunctionNames = @("Get-ConnectionEventValue", "Convert-DnsClientQueryEvent", "Get-DnsCorrelationRecords")
+$dnsFunctionText = foreach ($name in $dnsFunctionNames) {
+    $functionAst = $managerAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($functionAst) { $functionAst.Extent.Text }
+}
+try {
+    . ([scriptblock]::Create(($dnsFunctionText -join [Environment]::NewLine)))
+    $dnsRecord = [PSCustomObject]@{
+        Id = 3008
+        RecordId = 19
+        TimeCreated = (Get-Date)
+    }
+    $dnsRecord | Add-Member -MemberType ScriptMethod -Name ToXml -Value {
+        '<Event><EventData><Data Name="QueryName">updates.example.test</Data><Data Name="QueryType">A</Data><Data Name="QueryResults">203.0.113.10</Data><Data Name="ProcessId">4242</Data></EventData></Event>'
+    }
+    $dnsQuery = Convert-DnsClientQueryEvent -EventRecord $dnsRecord
+    $blockedConnection = [PSCustomObject]@{
+        Action = "Blocked"
+        EventId = 5157
+        Timestamp = $dnsRecord.TimeCreated.AddSeconds(2)
+        Program = "C:\\Program Files\\Smoke\\smoke.exe"
+        ProcessId = "4242"
+        DestinationAddress = "203.0.113.10"
+        DestinationPort = "443"
+    }
+    $correlation = @(Get-DnsCorrelationRecords -BlockedEvents @($blockedConnection) -DnsQueries @($dnsQuery) -WindowSeconds 30)
+    Assert-True ($dnsQuery.QueryName -eq "updates.example.test") "DNS query parser did not extract the domain."
+    Assert-True ($dnsQuery.ResolvedAddresses -contains "203.0.113.10") "DNS query parser did not extract the resolved IP."
+    Assert-True ($correlation.Count -eq 1 -and $correlation[0].Domain -eq "updates.example.test") "DNS correlation did not match the blocked connection."
+    Assert-True ($correlation[0].Correlation -eq "Process ID + resolved IP") "DNS correlation did not report the strongest match."
+}
+catch {
+    Assert-True $false "DNS correlation smoke test failed: $($_.Exception.Message)"
+}
 
 $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."

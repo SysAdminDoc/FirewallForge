@@ -334,6 +334,7 @@ try {
             <Button x:Name="btnQuickBlock" Content="Quick Block" Style="{StaticResource DangerButton}" Width="120"/>
             <Button x:Name="btnProgramWizard" Content="Program Wizard" Style="{StaticResource SuccessButton}" Width="140"/>
             <Button x:Name="btnConnectionMonitor" Content="Monitor Off" Width="120"/>
+            <Button x:Name="btnDnsCorrelation" Content="DNS Correlation" Width="135"/>
             <Button x:Name="btnOutboundLockdown" Content="Lockdown" Style="{StaticResource DangerButton}" Width="110"/>
             <Button x:Name="btnRollbackLockdown" Content="Rollback" Style="{StaticResource WarningButton}" Width="110"/>
             <Button x:Name="btnGroupOps" Content="Group Ops" Width="110"/>
@@ -552,6 +553,7 @@ $btnFindDuplicates = $Window.FindName("btnFindDuplicates")
 $btnQuickBlock = $Window.FindName("btnQuickBlock")
 $btnProgramWizard = $Window.FindName("btnProgramWizard")
 $btnConnectionMonitor = $Window.FindName("btnConnectionMonitor")
+$btnDnsCorrelation = $Window.FindName("btnDnsCorrelation")
 $btnOutboundLockdown = $Window.FindName("btnOutboundLockdown")
 $btnRollbackLockdown = $Window.FindName("btnRollbackLockdown")
 $btnGroupOps = $Window.FindName("btnGroupOps")
@@ -761,6 +763,224 @@ function Get-ConnectionEvents {
         if ($connectionEvent) {
             $connectionEvent
         }
+    }
+}
+
+function Convert-DnsClientQueryEvent {
+    param([object]$EventRecord)
+
+    $data = @{}
+    try {
+        $eventXml = [xml]$EventRecord.ToXml()
+        foreach ($item in @($eventXml.Event.EventData.Data)) {
+            if ($item.Name) {
+                $data[[string]$item.Name] = [string]$item.'#text'
+            }
+        }
+    }
+    catch {
+        return $null
+    }
+
+    $queryName = Get-ConnectionEventValue -Data $data -Names @("QueryName", "Query", "Name") -Default "Unknown domain"
+    if ([string]::IsNullOrWhiteSpace($queryName) -or $queryName -eq "Unknown domain") {
+        return $null
+    }
+
+    $queryResults = Get-ConnectionEventValue -Data $data -Names @("QueryResults", "QueryResult", "Results") -Default ""
+    $resolvedAddresses = New-Object System.Collections.Generic.List[string]
+    foreach ($candidate in @($queryResults -split '[,;|\s]+')) {
+        $trimmed = $candidate.Trim().Trim('[', ']')
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            continue
+        }
+        try {
+            $parsedAddress = [System.Net.IPAddress]::Parse($trimmed)
+            if (-not $resolvedAddresses.Contains($parsedAddress.IPAddressToString)) {
+                $resolvedAddresses.Add($parsedAddress.IPAddressToString)
+            }
+        }
+        catch {
+            # DNS event results may contain status text alongside addresses.
+        }
+    }
+
+    [PSCustomObject]@{
+        RecordId = $EventRecord.RecordId
+        Timestamp = $EventRecord.TimeCreated
+        EventId = [int]$EventRecord.Id
+        QueryName = $queryName.TrimEnd('.')
+        QueryType = Get-ConnectionEventValue -Data $data -Names @("QueryType", "Type") -Default "Unknown"
+        QueryResults = $queryResults
+        QueryStatus = Get-ConnectionEventValue -Data $data -Names @("QueryStatus", "Status") -Default ""
+        ProcessId = Get-ConnectionEventValue -Data $data -Names @("ProcessId", "ProcessID", "Process") -Default ""
+        ResolvedAddresses = $resolvedAddresses.ToArray()
+    }
+}
+
+function Get-DnsClientQueryEvents {
+    param(
+        [datetime]$StartTime,
+        [int]$MaxEvents = 500
+    )
+
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{
+                LogName = "Microsoft-Windows-DNS-Client/Operational"
+                Id = 3008
+                StartTime = $StartTime
+            } -MaxEvents $MaxEvents -ErrorAction Stop | Sort-Object TimeCreated)
+    }
+    catch {
+        if ($_.Exception.Message -match "No events were found|No events found") {
+            return @()
+        }
+        throw "Could not read Microsoft-Windows-DNS-Client/Operational. Enable the DNS Client Operational log if it is unavailable. Details: $($_.Exception.Message)"
+    }
+
+    foreach ($eventRecord in $events) {
+        $dnsEvent = Convert-DnsClientQueryEvent -EventRecord $eventRecord
+        if ($dnsEvent) {
+            $dnsEvent
+        }
+    }
+}
+
+function Get-DnsCorrelationRecords {
+    param(
+        [object[]]$BlockedEvents,
+        [object[]]$DnsQueries,
+        [int]$WindowSeconds = 30
+    )
+
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($blockedEvent in @($BlockedEvents | Where-Object { $_.Action -eq "Blocked" -or [int]$_.EventId -eq 5157 })) {
+        $blockedTimestamp = [datetime]$blockedEvent.Timestamp
+        $candidates = New-Object System.Collections.Generic.List[object]
+        foreach ($dnsQuery in @($DnsQueries)) {
+            if ($null -eq $dnsQuery -or $null -eq $dnsQuery.Timestamp) {
+                continue
+            }
+
+            $deltaSeconds = [math]::Abs(($blockedTimestamp - [datetime]$dnsQuery.Timestamp).TotalSeconds)
+            if ($deltaSeconds -gt $WindowSeconds) {
+                continue
+            }
+
+            $processMatch = -not [string]::IsNullOrWhiteSpace([string]$blockedEvent.ProcessId) -and
+                -not [string]::IsNullOrWhiteSpace([string]$dnsQuery.ProcessId) -and
+                ([string]$blockedEvent.ProcessId -eq [string]$dnsQuery.ProcessId)
+            $addressMatch = $false
+            $destinationAddress = [string]$blockedEvent.DestinationAddress
+            if (-not [string]::IsNullOrWhiteSpace($destinationAddress) -and $destinationAddress -notin @("Any", "-")) {
+                $addressMatch = @($dnsQuery.ResolvedAddresses) -contains $destinationAddress
+            }
+
+            if (-not $processMatch -and -not $addressMatch) {
+                continue
+            }
+
+            $correlation = if ($processMatch -and $addressMatch) {
+                "Process ID + resolved IP"
+            }
+            elseif ($processMatch) {
+                "Process ID"
+            }
+            else {
+                "Resolved IP"
+            }
+
+            $score = 0
+            if ($processMatch) { $score += 100 }
+            if ($addressMatch) { $score += 50 }
+            $candidates.Add([PSCustomObject]@{
+                    Score = $score
+                    DeltaSeconds = [math]::Round($deltaSeconds, 1)
+                    DnsQuery = $dnsQuery
+                    Correlation = $correlation
+                })
+        }
+
+        $best = @($candidates | Sort-Object Score, DeltaSeconds -Descending | Select-Object -First 1)
+        if ($best.Count -eq 0) {
+            $records.Add([PSCustomObject]@{
+                    BlockedTimestamp = $blockedTimestamp
+                    Program = $blockedEvent.Program
+                    ProcessId = $blockedEvent.ProcessId
+                    DestinationAddress = $blockedEvent.DestinationAddress
+                    DestinationPort = $blockedEvent.DestinationPort
+                    Domain = "(no matching DNS query)"
+                    QueryTimestamp = $null
+                    ResolvedAddresses = ""
+                    QueryType = ""
+                    QueryStatus = ""
+                    Correlation = "None"
+                    DeltaSeconds = $null
+                })
+            continue
+        }
+
+        $query = $best[0].DnsQuery
+        $records.Add([PSCustomObject]@{
+                BlockedTimestamp = $blockedTimestamp
+                Program = $blockedEvent.Program
+                ProcessId = $blockedEvent.ProcessId
+                DestinationAddress = $blockedEvent.DestinationAddress
+                DestinationPort = $blockedEvent.DestinationPort
+                Domain = $query.QueryName
+                QueryTimestamp = $query.Timestamp
+                ResolvedAddresses = (@($query.ResolvedAddresses) -join ", ")
+                QueryType = $query.QueryType
+                QueryStatus = $query.QueryStatus
+                Correlation = $best[0].Correlation
+                DeltaSeconds = $best[0].DeltaSeconds
+            })
+    }
+    return $records.ToArray()
+}
+
+function Show-DnsCorrelationViewer {
+    $minutes = 30
+    $startTime = (Get-Date).AddMinutes(-$minutes)
+    try {
+        $blockedEvents = @(Get-ConnectionEvents -StartTime $startTime | Where-Object { $_.Action -eq "Blocked" })
+        $dnsQueries = @(Get-DnsClientQueryEvents -StartTime $startTime.AddSeconds(-30))
+        $records = @(Get-DnsCorrelationRecords -BlockedEvents $blockedEvents -DnsQueries $dnsQueries -WindowSeconds 30)
+
+        $report = New-Object System.Text.StringBuilder
+        [void]$report.AppendLine("BLOCKED FIREWALL CONNECTIONS WITH DNS CORRELATION")
+        [void]$report.AppendLine("=" * 110)
+        [void]$report.AppendLine("Window: last $minutes minutes | DNS source: Microsoft-Windows-DNS-Client/Operational event 3008")
+        [void]$report.AppendLine("Blocked events: $($blockedEvents.Count) | DNS queries: $($dnsQueries.Count) | Correlated rows: $($records.Count)")
+        [void]$report.AppendLine("")
+
+        if ($records.Count -eq 0) {
+            [void]$report.AppendLine("No blocked Security 5157 events were found in this window.")
+        }
+        else {
+            foreach ($record in $records | Sort-Object BlockedTimestamp -Descending) {
+                [void]$report.AppendLine(("[{0:yyyy-MM-dd HH:mm:ss}] {1} -> {2}:{3}" -f $record.BlockedTimestamp, $record.Program, $record.DestinationAddress, $record.DestinationPort))
+                [void]$report.AppendLine(("  DNS: {0}  ({1}; {2})" -f $record.Domain, $record.QueryType, $record.ResolvedAddresses))
+                [void]$report.AppendLine(("  Match: {0}{1}" -f $record.Correlation, $(if ($null -ne $record.DeltaSeconds) { "; time delta $($record.DeltaSeconds)s" } else { "" })))
+                if ($record.QueryStatus) {
+                    [void]$report.AppendLine("  Query status: $($record.QueryStatus)")
+                }
+            }
+        }
+
+        [void]$report.AppendLine("")
+        [void]$report.AppendLine("Correlation uses a 30-second timestamp window plus matching process ID or resolved destination IP.")
+        [void]$report.AppendLine("A missing match means the DNS event was not recorded, the result was cached, or the connection did not originate from a DNS name.")
+        Update-Status "DNS correlation: $($records.Count) blocked connection(s)" $(if ($records.Count -gt 0) { "#FFA500" } else { "#00FF00" })
+        Show-ReportWindow -Title "DNS Correlation" -Text $report.ToString() -Width 1100 -Height 700
+    }
+    catch {
+        Update-Status "DNS correlation failed: $($_.Exception.Message)" "#FF0000"
+        [System.Windows.MessageBox]::Show(
+            "Could not read the firewall or DNS event logs.`n`nError: $($_.Exception.Message)",
+            "DNS Correlation Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
     }
 }
 
@@ -3595,6 +3815,7 @@ $btnFindDuplicates.Add_Click({ Find-DuplicateRules })
 $btnQuickBlock.Add_Click({ Show-QuickBlockMenu })
 $btnProgramWizard.Add_Click({ Show-ProgramRuleWizard })
 $btnConnectionMonitor.Add_Click({ Toggle-ConnectionMonitor })
+$btnDnsCorrelation.Add_Click({ Show-DnsCorrelationViewer })
 $btnOutboundLockdown.Add_Click({ Enable-OutboundLockdown })
 $btnRollbackLockdown.Add_Click({
     try {

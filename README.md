@@ -22,6 +22,7 @@ Live firewall rule management:
 - **Quick Block** menu - one-click blocking for programs (file browser), ports (text input), or IP addresses (text input)
 - **Collapsible Stats Panel** - total/inbound/outbound, enabled/disabled, allow/block, by profile counts
 - **Search Highlighting** - bold + colored rows when search filter is active
+- **DNS Correlation** - correlate recent blocked connections with Windows DNS Client event 3008 queries
 
 ### FirewallRulesEditor.ps1
 Offline backup editor:
