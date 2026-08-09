@@ -11,6 +11,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Group operations for enabling, disabling, or deleting rules by group with GPO protection.
 - Added: Tailable pfirewall.log viewer with ALLOW/DROP coloring and action, direction, and port filters.
 - Added: Offline comparison of any two .fwbackup files with added, removed, and modified reports.
+- Added: Merge conflict strategies for prefer-newer, prefer-imported, and per-rule manual decisions.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 
