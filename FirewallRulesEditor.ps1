@@ -6,7 +6,7 @@
     Does NOT modify your system's actual firewall - purely an offline editor.
 .NOTES
     Author: Matt
-    Version: 1.1.0
+    Version: 1.3.0
 #>
 
 Add-Type -AssemblyName PresentationFramework
@@ -20,7 +20,7 @@ Add-Type -AssemblyName System.Windows.Forms
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Firewall Rules Editor v1.1.0 (Offline) - 0 rules"
+        Title="Firewall Rules Editor v1.3.0 (Offline) - 0 rules"
         Height="800" Width="1200"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"
@@ -543,7 +543,7 @@ function Update-Status {
 
 function Update-TitleBar {
     $count = $Script:AllRules.Count
-    $Window.Title = "Firewall Rules Editor v1.1.0 (Offline) - $count rules"
+    $Window.Title = "Firewall Rules Editor v1.3.0 (Offline) - $count rules"
 }
 
 function Update-Counts {

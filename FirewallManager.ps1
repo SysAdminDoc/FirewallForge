@@ -5,7 +5,7 @@
     A professional GUI application for backing up, editing, and restoring Windows Firewall rules.
 .NOTES
     Author: Matt
-    Version: 1.2.0
+    Version: 1.3.0
     Requires: Administrator privileges
 #>
 
@@ -38,7 +38,7 @@ try {
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="FirewallManager v1.2.0"
+        Title="FirewallManager v1.3.0"
         Height="860" Width="1360"
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"

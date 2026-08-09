@@ -44,6 +44,8 @@ Assert-True ($cliSource -match 'Set-NetFirewallRule') "CLI rule update is missin
 Assert-True ($cliSource -match 'Remove-NetFirewallRule') "CLI prune operation is missing."
 
 $managerSource = Get-Content -LiteralPath $managerPath -Raw
+Assert-True ($managerSource -match 'Version: 1\.3\.0') "Manager version is not synchronized to 1.3.0."
+Assert-True ($managerSource -match 'Title="FirewallManager v1\.3\.0"') "Manager title version is not synchronized to 1.3.0."
 Assert-True ($managerSource -match 'function Show-ProgramRuleWizard') "Program wizard function is missing."
 Assert-True ($managerSource -match '\$btnProgramWizard\.Add_Click') "Program wizard button is not wired."
 Assert-True ($managerSource -match 'Block In \+ Out') "Program wizard block preset is missing."
@@ -128,6 +130,8 @@ catch {
 }
 
 $editorSource = Get-Content -LiteralPath $editorPath -Raw
+Assert-True ($editorSource -match 'Version: 1\.3\.0') "Editor version is not synchronized to 1.3.0."
+Assert-True ($editorSource -match 'Firewall Rules Editor v1\.3\.0') "Editor title version is not synchronized to 1.3.0."
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
 Assert-True ($editorSource -match 'function Compare-BackupRuleSets') "Two-backup diff engine is missing."
 Assert-True ($editorSource -match '\$btnCompareBackups\.Add_Click') "Two-backup comparison button is not wired."
