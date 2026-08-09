@@ -82,6 +82,8 @@ Assert-True ($editorSource -match 'function ConvertTo-PowerShellFirewallScript')
 Assert-True ($editorSource -match 'function Write-GpoRegistryPol') "Registry.pol policy export is missing."
 Assert-True ($editorSource -match 'REGFILE_SIGNATURE') "Registry.pol signature is missing."
 Assert-True ($editorSource -match '\$btnExportPolicy\.Add_Click') "Policy export button is not wired."
+Assert-True ($editorSource -match 'function Test-EditorRuleSearchMatch') "Editor regex search matcher is missing."
+Assert-True ($editorSource -match '\$chkRegexSearch\.Add_Click') "Editor regex search toggle is not wired."
 
 # Exercise the formatters without starting WPF or changing firewall state.
 $editorTokens = $null

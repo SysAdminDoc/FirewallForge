@@ -16,6 +16,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Policy export to netsh, PowerShell, and binary GPO Registry.pol formats.
 - Added: Task Scheduler integration for daily/weekly backups with retention rotation and headless worker.
 - Added: IPv6 coverage audit for IPv4-only rules without matching IPv6 twins.
+- Added: Regex search mode to the offline editor's rule filter with invalid-pattern feedback.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

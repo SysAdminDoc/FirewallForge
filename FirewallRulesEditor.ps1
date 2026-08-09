@@ -318,6 +318,7 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnSelectFiltered" Content="Select Filtered" Style="{StaticResource WarningButton}" Width="120"/>
             <TextBox x:Name="txtSearch" Width="250" Margin="20,0,5,0" VerticalAlignment="Center"
                      ToolTip="Search by name, program, port, etc."/>
+            <CheckBox x:Name="chkRegexSearch" Content="Regex" Margin="5,0,0,0" VerticalAlignment="Center"/>
             <Button x:Name="btnSearch" Content="Filter" Width="80"/>
             <Button x:Name="btnClearSearch" Content="Clear Filter" Width="100"/>
             <Button x:Name="btnDeleteSelected" Content="Delete Selected" Style="{StaticResource DangerButton}" Width="130" Margin="20,0,0,0"/>
@@ -493,6 +494,7 @@ $btnDeleteSelected = $Window.FindName("btnDeleteSelected")
 $btnRefreshCounts = $Window.FindName("btnRefreshCounts")
 $btnSearch = $Window.FindName("btnSearch")
 $btnClearSearch = $Window.FindName("btnClearSearch")
+$chkRegexSearch = $Window.FindName("chkRegexSearch")
 $btnAddRule = $Window.FindName("btnAddRule")
 $txtSearch = $Window.FindName("txtSearch")
 $txtStatus = $Window.FindName("txtStatus")
@@ -1964,8 +1966,34 @@ function Export-SelectedToCSV {
     }
 }
 
+function Test-EditorRuleSearchMatch {
+    param(
+        [object]$Rule,
+        [string]$SearchText,
+        [bool]$UseRegex
+    )
+
+    $fields = @(
+        $Rule.Name, $Rule.DisplayName, $Rule.Description, $Rule.Direction, $Rule.Action,
+        $Rule.Enabled, $Rule.Profile, $Rule.Protocol, $Rule.LocalPort, $Rule.RemotePort, $Rule.Program
+    )
+    foreach ($field in $fields) {
+        $value = if ($null -eq $field) { "" } else { [string]$field }
+        if ($UseRegex) {
+            if ([regex]::IsMatch($value, $SearchText, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                return $true
+            }
+        }
+        elseif ($value -like "*$SearchText*") {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Filter-Rules {
     $searchText = $txtSearch.Text.Trim()
+    $useRegex = [bool]$chkRegexSearch.IsChecked
 
     if ([string]::IsNullOrEmpty($searchText)) {
         $Script:FilteredView = $null
@@ -1973,15 +2001,18 @@ function Filter-Rules {
         Update-Status "Showing all $($Script:AllRules.Count) rules"
     }
     else {
+        if ($useRegex) {
+            try {
+                $null = [regex]::new($searchText)
+            }
+            catch {
+                Update-Status "Invalid regex: $($_.Exception.Message)"
+                return
+            }
+        }
         $Script:FilteredView = [System.Collections.Generic.List[PSObject]]::new()
         foreach ($rule in $Script:AllRules) {
-            if ($rule.DisplayName -like "*$searchText*" -or
-                $rule.Program -like "*$searchText*" -or
-                $rule.LocalPort -like "*$searchText*" -or
-                $rule.RemotePort -like "*$searchText*" -or
-                $rule.Protocol -like "*$searchText*" -or
-                $rule.Direction -like "*$searchText*" -or
-                $rule.Action -like "*$searchText*") {
+            if (Test-EditorRuleSearchMatch -Rule $rule -SearchText $searchText -UseRegex $useRegex) {
                 $Script:FilteredView.Add($rule)
             }
         }
@@ -2105,6 +2136,7 @@ $btnDeleteSelected.Add_Click({
 })
 
 $btnSearch.Add_Click({ Filter-Rules })
+$chkRegexSearch.Add_Click({ if (-not [string]::IsNullOrWhiteSpace($txtSearch.Text)) { Filter-Rules } })
 $btnRefreshCounts.Add_Click({ Update-Counts })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
