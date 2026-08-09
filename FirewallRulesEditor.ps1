@@ -304,6 +304,7 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnExportBackup" Content="Export Selected to .fwbackup" Style="{StaticResource SuccessButton}" Width="200"/>
             <Button x:Name="btnExportCSV" Content="Export Selected to CSV" Style="{StaticResource SuccessButton}" Width="180"/>
             <Button x:Name="btnShowChanges" Content="Show Changes" Width="120"/>
+            <Button x:Name="btnCompareBackups" Content="Compare Backups" Width="140"/>
             <Button x:Name="btnClearAll" Content="Clear All" Style="{StaticResource DangerButton}" Width="100"/>
         </WrapPanel>
 
@@ -478,6 +479,7 @@ $btnMergeBackup = $Window.FindName("btnMergeBackup")
 $btnExportBackup = $Window.FindName("btnExportBackup")
 $btnExportCSV = $Window.FindName("btnExportCSV")
 $btnShowChanges = $Window.FindName("btnShowChanges")
+$btnCompareBackups = $Window.FindName("btnCompareBackups")
 $btnClearAll = $Window.FindName("btnClearAll")
 $btnSelectAll = $Window.FindName("btnSelectAll")
 $btnSelectNone = $Window.FindName("btnSelectNone")
@@ -937,6 +939,181 @@ function Show-Changes {
     $reportWindow.ShowDialog() | Out-Null
 }
 
+function Show-EditorReportWindow {
+    param(
+        [string]$Title,
+        [string]$Text,
+        [int]$Width = 820,
+        [int]$Height = 600
+    )
+
+    $reportWindow = New-Object System.Windows.Window
+    $reportWindow.Title = $Title
+    $reportWindow.Width = $Width
+    $reportWindow.Height = $Height
+    $reportWindow.WindowStartupLocation = "CenterOwner"
+    $reportWindow.Owner = $Window
+    $reportWindow.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    $contentRow = New-Object System.Windows.Controls.RowDefinition
+    $contentRow.Height = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($contentRow)
+    $buttonRow = New-Object System.Windows.Controls.RowDefinition
+    $buttonRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($buttonRow)
+
+    $textBox = New-Object System.Windows.Controls.TextBox
+    $textBox.Text = $Text
+    $textBox.IsReadOnly = $true
+    $textBox.AcceptsReturn = $true
+    $textBox.TextWrapping = "NoWrap"
+    $textBox.VerticalScrollBarVisibility = "Auto"
+    $textBox.HorizontalScrollBarVisibility = "Auto"
+    $textBox.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $textBox.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $textBox.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $textBox.FontSize = 12
+    [System.Windows.Controls.Grid]::SetRow($textBox, 0)
+    $grid.Children.Add($textBox) | Out-Null
+
+    $closeButton = New-Object System.Windows.Controls.Button
+    $closeButton.Content = "Close"
+    $closeButton.Width = 100
+    $closeButton.HorizontalAlignment = "Right"
+    $closeButton.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
+    $closeButton.Add_Click({ $reportWindow.Close() }.GetNewClosure())
+    [System.Windows.Controls.Grid]::SetRow($closeButton, 1)
+    $grid.Children.Add($closeButton) | Out-Null
+
+    $reportWindow.Content = $grid
+    $reportWindow.ShowDialog() | Out-Null
+}
+
+function Read-BackupRuleSet {
+    param([string]$Path)
+
+    $backup = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $ruleData = if ($backup.RuleDetails) { @($backup.RuleDetails) } else { @($backup) }
+    $rules = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($r in $ruleData) {
+        $rules.Add((New-RuleObject `
+            -Name $r.Name `
+            -DisplayName $r.DisplayName `
+            -Description $r.Description `
+            -Direction $r.Direction `
+            -Action $r.Action `
+            -Enabled $r.Enabled `
+            -Profile $(if ($r.Profile) { $r.Profile } else { "Any" }) `
+            -Protocol $(if ($r.Protocol) { $r.Protocol } else { "Any" }) `
+            -LocalPort $(if ($r.LocalPort) { $r.LocalPort } else { "Any" }) `
+            -RemotePort $(if ($r.RemotePort) { $r.RemotePort } else { "Any" }) `
+            -Program $(if ($r.Program) { $r.Program } else { "Any" }) `
+            -Selected $false))
+    }
+    return [PSCustomObject]@{
+        Backup = $backup
+        Rules = $rules
+    }
+}
+
+function Compare-BackupRuleSets {
+    param(
+        [string]$LeftPath,
+        [string]$RightPath
+    )
+
+    $leftData = Read-BackupRuleSet -Path $LeftPath
+    $rightData = Read-BackupRuleSet -Path $RightPath
+    $leftByName = @{}
+    $rightByName = @{}
+    foreach ($rule in $leftData.Rules) { $leftByName[$rule.Name] = $rule }
+    foreach ($rule in $rightData.Rules) { $rightByName[$rule.Name] = $rule }
+
+    $added = @($rightData.Rules | Where-Object { -not $leftByName.ContainsKey($_.Name) })
+    $removed = @($leftData.Rules | Where-Object { -not $rightByName.ContainsKey($_.Name) })
+    $modified = New-Object System.Collections.Generic.List[PSObject]
+    $properties = @("DisplayName", "Description", "Direction", "Action", "Enabled", "Profile", "Protocol", "LocalPort", "RemotePort", "Program")
+    foreach ($name in $leftByName.Keys) {
+        if (-not $rightByName.ContainsKey($name)) { continue }
+        $leftRule = $leftByName[$name]
+        $rightRule = $rightByName[$name]
+        $changes = New-Object System.Collections.Generic.List[string]
+        foreach ($property in $properties) {
+            $oldValue = [string]$leftRule.$property
+            $newValue = [string]$rightRule.$property
+            if ($oldValue -ne $newValue) {
+                $changes.Add("  $property : $oldValue -> $newValue")
+            }
+        }
+        if ($changes.Count -gt 0) {
+            $modified.Add([PSCustomObject]@{ Rule = $rightRule; Changes = @($changes) })
+        }
+    }
+
+    $report = New-Object System.Text.StringBuilder
+    [void]$report.AppendLine("FIREWALL BACKUP COMPARISON")
+    [void]$report.AppendLine("=" * 72)
+    [void]$report.AppendLine("Left (baseline):  $LeftPath")
+    [void]$report.AppendLine("Right (compared): $RightPath")
+    [void]$report.AppendLine("")
+
+    [void]$report.AppendLine("ADDED IN RIGHT ($($added.Count))")
+    [void]$report.AppendLine("-" * 40)
+    if ($added.Count -eq 0) { [void]$report.AppendLine("  (none)") }
+    foreach ($rule in $added) {
+        [void]$report.AppendLine("  + $($rule.DisplayName) [$($rule.Direction) $($rule.Action)]")
+    }
+    [void]$report.AppendLine("")
+
+    [void]$report.AppendLine("REMOVED FROM RIGHT ($($removed.Count))")
+    [void]$report.AppendLine("-" * 40)
+    if ($removed.Count -eq 0) { [void]$report.AppendLine("  (none)") }
+    foreach ($rule in $removed) {
+        [void]$report.AppendLine("  - $($rule.DisplayName) [$($rule.Direction) $($rule.Action)]")
+    }
+    [void]$report.AppendLine("")
+
+    [void]$report.AppendLine("MODIFIED IN RIGHT ($($modified.Count))")
+    [void]$report.AppendLine("-" * 40)
+    if ($modified.Count -eq 0) { [void]$report.AppendLine("  (none)") }
+    foreach ($item in $modified) {
+        [void]$report.AppendLine("  * $($item.Rule.DisplayName)")
+        foreach ($change in $item.Changes) { [void]$report.AppendLine("    $change") }
+    }
+    [void]$report.AppendLine("")
+    [void]$report.AppendLine("Summary: +$($added.Count) added, -$($removed.Count) removed, ~$($modified.Count) modified")
+
+    Show-EditorReportWindow -Title "Compare Firewall Backups" -Text $report.ToString()
+}
+
+function Compare-FWBackups {
+    $openDialog = New-Object Microsoft.Win32.OpenFileDialog
+    $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
+    $openDialog.Title = "Select baseline firewall backup"
+    if (-not $openDialog.ShowDialog()) { return }
+    $leftPath = $openDialog.FileName
+
+    $openDialog.Title = "Select backup to compare"
+    if (-not $openDialog.ShowDialog()) { return }
+    $rightPath = $openDialog.FileName
+
+    try {
+        Update-Status "Comparing backup files..."
+        Compare-BackupRuleSets -LeftPath $leftPath -RightPath $rightPath
+        Update-Status "Backup comparison complete"
+    }
+    catch {
+        Update-Status "Backup comparison failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Failed to compare backups.`n`nError: $($_.Exception.Message)",
+            "Compare Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+}
+
 function Export-SelectedToBackup {
     $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
 
@@ -1075,6 +1252,7 @@ $btnMergeBackup.Add_Click({ Merge-FWBackup })
 $btnExportBackup.Add_Click({ Export-SelectedToBackup })
 $btnExportCSV.Add_Click({ Export-SelectedToCSV })
 $btnShowChanges.Add_Click({ Show-Changes })
+$btnCompareBackups.Add_Click({ Compare-FWBackups })
 
 $btnClearAll.Add_Click({
     $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()

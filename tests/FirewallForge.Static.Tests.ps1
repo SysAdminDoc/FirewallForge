@@ -55,6 +55,11 @@ Assert-True ($managerSource -match 'function Read-FirewallLogEntries') "Firewall
 Assert-True ($managerSource -match 'pfirewall\.log') "Standard firewall log path is missing."
 Assert-True ($managerSource -match '\$btnLogViewer\.Add_Click') "Firewall log viewer button is not wired."
 
+$editorSource = Get-Content -LiteralPath $editorPath -Raw
+Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
+Assert-True ($editorSource -match 'function Compare-BackupRuleSets') "Two-backup diff engine is missing."
+Assert-True ($editorSource -match '\$btnCompareBackups\.Add_Click') "Two-backup comparison button is not wired."
+
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
     Assert-True $true "JSON schema parsed."
