@@ -13,6 +13,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Offline comparison of any two .fwbackup files with added, removed, and modified reports.
 - Added: Merge conflict strategies for prefer-newer, prefer-imported, and per-rule manual decisions.
 - Added: Offline rule template library with JSON save, browse, insert, and delete actions.
+- Added: Policy export to netsh, PowerShell, and binary GPO Registry.pol formats.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

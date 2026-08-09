@@ -306,6 +306,7 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnShowChanges" Content="Show Changes" Width="120"/>
             <Button x:Name="btnCompareBackups" Content="Compare Backups" Width="140"/>
             <Button x:Name="btnTemplates" Content="Templates" Width="105"/>
+            <Button x:Name="btnExportPolicy" Content="Export Policy" Width="120"/>
             <Button x:Name="btnClearAll" Content="Clear All" Style="{StaticResource DangerButton}" Width="100"/>
         </WrapPanel>
 
@@ -482,6 +483,7 @@ $btnExportCSV = $Window.FindName("btnExportCSV")
 $btnShowChanges = $Window.FindName("btnShowChanges")
 $btnCompareBackups = $Window.FindName("btnCompareBackups")
 $btnTemplates = $Window.FindName("btnTemplates")
+$btnExportPolicy = $Window.FindName("btnExportPolicy")
 $btnClearAll = $Window.FindName("btnClearAll")
 $btnSelectAll = $Window.FindName("btnSelectAll")
 $btnSelectNone = $Window.FindName("btnSelectNone")
@@ -1609,6 +1611,257 @@ function Show-TemplateLibrary {
     $dialog.ShowDialog() | Out-Null
 }
 
+function ConvertTo-NetshFirewallScript {
+    param([object[]]$Rules)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("@echo off")
+    $lines.Add("rem FirewallForge generated netsh policy script")
+    $lines.Add("rem Run from an elevated Command Prompt.")
+    $lines.Add("")
+    foreach ($rule in $Rules) {
+        $name = ([string]$rule.DisplayName) -replace '"', '\"'
+        $direction = if ($rule.Direction -eq "Inbound") { "in" } else { "out" }
+        $action = if ($rule.Action -eq "Block") { "block" } else { "allow" }
+        $enabled = if ($rule.Enabled -eq "False") { "no" } else { "yes" }
+        $line = 'netsh advfirewall firewall add rule name="{0}" dir={1} action={2} enable={3}' -f $name, $direction, $action, $enabled
+        if ($rule.Profile -and $rule.Profile -ne "Any") { $line += " profile=$(([string]$rule.Profile).Replace(', ', ','))" }
+        if ($rule.Protocol -and $rule.Protocol -ne "Any") { $line += " protocol=$($rule.Protocol.ToLowerInvariant())" }
+        if ($rule.LocalPort -and $rule.LocalPort -ne "Any") { $line += (' localport="{0}"' -f $rule.LocalPort) }
+        if ($rule.RemotePort -and $rule.RemotePort -ne "Any") { $line += (' remoteport="{0}"' -f $rule.RemotePort) }
+        if ($rule.Program -and $rule.Program -ne "Any") { $line += (' program="{0}"' -f $rule.Program) }
+        if ($rule.PSObject.Properties.Name -contains "RemoteAddress" -and $rule.RemoteAddress -and $rule.RemoteAddress -ne "Any") { $line += (' remoteip="{0}"' -f $rule.RemoteAddress) }
+        if ($rule.PSObject.Properties.Name -contains "Service" -and $rule.Service -and $rule.Service -ne "Any") { $line += (' service="{0}"' -f $rule.Service) }
+        $lines.Add($line)
+    }
+    return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+}
+
+function ConvertTo-PowerShellFirewallScript {
+    param([object[]]$Rules)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("# FirewallForge generated New-NetFirewallRule script")
+    $lines.Add("# Run from an elevated PowerShell session.")
+    $lines.Add("")
+    foreach ($rule in $Rules) {
+        $parts = New-Object System.Collections.Generic.List[string]
+        $escape = { param([object]$Value) "'$(if ($null -eq $Value) { '' } else { ([string]$Value -replace "'", "''") })'" }
+        $parts.Add("-DisplayName $(& $escape $rule.DisplayName)")
+        $parts.Add("-Direction $(& $escape $rule.Direction)")
+        $parts.Add("-Action $(& $escape $rule.Action)")
+        $enabledToken = if ($rule.Enabled -eq "False") { '$false' } else { '$true' }
+        $parts.Add("-Enabled $enabledToken")
+        if ($rule.Profile -and $rule.Profile -ne "Any") { $parts.Add("-Profile $(& $escape $rule.Profile)") } else { $parts.Add("-Profile 'Any'") }
+        if ($rule.Protocol -and $rule.Protocol -ne "Any") { $parts.Add("-Protocol $(& $escape $rule.Protocol)") }
+        if ($rule.LocalPort -and $rule.LocalPort -ne "Any") { $parts.Add("-LocalPort $(& $escape $rule.LocalPort)") }
+        if ($rule.RemotePort -and $rule.RemotePort -ne "Any") { $parts.Add("-RemotePort $(& $escape $rule.RemotePort)") }
+        if ($rule.Program -and $rule.Program -ne "Any") { $parts.Add("-Program $(& $escape $rule.Program)") }
+        if ($rule.PSObject.Properties.Name -contains "RemoteAddress" -and $rule.RemoteAddress -and $rule.RemoteAddress -ne "Any") { $parts.Add("-RemoteAddress $(& $escape $rule.RemoteAddress)") }
+        if ($rule.PSObject.Properties.Name -contains "Service" -and $rule.Service -and $rule.Service -ne "Any") { $parts.Add("-Service $(& $escape $rule.Service)") }
+        $lines.Add("New-NetFirewallRule $($parts -join ' ') -ErrorAction Stop")
+    }
+    return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+}
+
+function New-GpoFirewallRuleData {
+    param([object]$Rule)
+
+    $tokens = New-Object System.Collections.Generic.List[string]
+    $tokens.Add("v2.10")
+    $tokens.Add("Action=$(if ($Rule.Action -eq 'Block') { 'Block' } else { 'Allow' })")
+    $tokens.Add("Active=$(if ($Rule.Enabled -eq 'False') { 'FALSE' } else { 'TRUE' })")
+    $tokens.Add("Dir=$(if ($Rule.Direction -eq 'Inbound') { 'In' } else { 'Out' })")
+    if ($Rule.Profile -and $Rule.Profile -ne "Any") {
+        foreach ($profile in ([string]$Rule.Profile -split ',')) {
+            $tokens.Add("Profile=$($profile.Trim())")
+        }
+    }
+    if ($Rule.Protocol -and $Rule.Protocol -ne "Any") {
+        $protocol = switch ($Rule.Protocol.ToUpperInvariant()) {
+            "TCP" { "6"; break }
+            "UDP" { "17"; break }
+            "ICMPV4" { "1"; break }
+            "ICMPV6" { "58"; break }
+            default { [string]$Rule.Protocol }
+        }
+        $tokens.Add("Protocol=$protocol")
+    }
+    if ($Rule.LocalPort -and $Rule.LocalPort -ne "Any") { $tokens.Add("LPort=$($Rule.LocalPort)") }
+    if ($Rule.RemotePort -and $Rule.RemotePort -ne "Any") { $tokens.Add("RPort=$($Rule.RemotePort)") }
+    if ($Rule.Program -and $Rule.Program -ne "Any") { $tokens.Add("App=$($Rule.Program)") }
+    if ($Rule.PSObject.Properties.Name -contains "RemoteAddress" -and $Rule.RemoteAddress -and $Rule.RemoteAddress -ne "Any") {
+        foreach ($address in ([string]$Rule.RemoteAddress -split ',')) {
+            $trimmed = $address.Trim()
+            if ($trimmed -match ':') { $tokens.Add("RA6=$trimmed") } else { $tokens.Add("RA4=$trimmed") }
+        }
+    }
+    if ($Rule.PSObject.Properties.Name -contains "Service" -and $Rule.Service -and $Rule.Service -ne "Any") { $tokens.Add("Svc=$($Rule.Service)") }
+    $tokens.Add("Name=$($Rule.DisplayName)")
+    $tokens.Add("Desc=$([string]$Rule.Description)")
+    return ($tokens -join '|') + '|'
+}
+
+function Write-RegistryPolString {
+    param(
+        [System.IO.BinaryWriter]$Writer,
+        [string]$Value
+    )
+
+    if ($null -eq $Value) { $Value = "" }
+    $Writer.Write([System.Text.Encoding]::Unicode.GetBytes($Value))
+    $Writer.Write([byte]0)
+    $Writer.Write([byte]0)
+}
+
+function Write-RegistryPolRecord {
+    param(
+        [System.IO.BinaryWriter]$Writer,
+        [string]$Key,
+        [string]$ValueName,
+        [int]$Type,
+        [byte[]]$Data
+    )
+
+    $Writer.Write([byte]0x5B); $Writer.Write([byte]0)
+    Write-RegistryPolString -Writer $Writer -Value $Key
+    $Writer.Write([byte]0x3B); $Writer.Write([byte]0)
+    Write-RegistryPolString -Writer $Writer -Value $ValueName
+    $Writer.Write([byte]0x3B); $Writer.Write([byte]0)
+    $Writer.Write([int32]$Type)
+    $Writer.Write([byte]0x3B); $Writer.Write([byte]0)
+    $Writer.Write([int32]$Data.Length)
+    $Writer.Write([byte]0x3B); $Writer.Write([byte]0)
+    $Writer.Write($Data)
+    $Writer.Write([byte]0x5D); $Writer.Write([byte]0)
+}
+
+function Write-GpoRegistryPol {
+    param(
+        [object[]]$Rules,
+        [string]$Path
+    )
+
+    $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $writer = New-Object System.IO.BinaryWriter($stream)
+    try {
+        # REGFILE_SIGNATURE (PReg) and registry policy file version 1.
+        $writer.Write([int32]0x67655250)
+        $writer.Write([int32]1)
+        $key = "Software\Policies\Microsoft\WindowsFirewall\FirewallRules"
+        foreach ($rule in $Rules) {
+            $valueName = if ($rule.Name -match '^\{[0-9A-Fa-f-]+\}$') { $rule.Name } else { "{$([guid]::NewGuid().ToString().ToUpperInvariant())}" }
+            $data = [System.Text.Encoding]::Unicode.GetBytes((New-GpoFirewallRuleData -Rule $rule) + [char]0)
+            Write-RegistryPolRecord -Writer $writer -Key $key -ValueName $valueName -Type 1 -Data $data
+        }
+    }
+    finally {
+        $writer.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Show-PolicyExportPicker {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Export Firewall Policy"
+    $dialog.Width = 560
+    $dialog.Height = 260
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = $null
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+    $label = New-Object System.Windows.Controls.Label
+    $label.Content = "Output format"
+    $panel.Children.Add($label) | Out-Null
+    $formatCombo = New-Object System.Windows.Controls.ComboBox
+    foreach ($format in @("netsh firewall script", "PowerShell New-NetFirewallRule script", "GPO Registry.pol fragment")) { $formatCombo.Items.Add($format) | Out-Null }
+    $formatCombo.SelectedIndex = 0
+    $formatCombo.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+    $panel.Children.Add($formatCombo) | Out-Null
+    $details = New-Object System.Windows.Controls.TextBlock
+    $details.Text = "The GPO option writes a computer-scoped Registry.pol fragment using the Windows registry policy file format."
+    $details.TextWrapping = "Wrap"
+    $details.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $details.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($details) | Out-Null
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 90
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $export = New-Object System.Windows.Controls.Button
+    $export.Content = "Continue"
+    $export.Width = 100
+    $export.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $export.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $export.Add_Click({ $dialog.Tag = [string]$formatCombo.SelectedItem; $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($export) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
+function Export-SelectedPolicy {
+    $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
+    if ($selectedRules.Count -eq 0) {
+        [System.Windows.MessageBox]::Show(
+            "No rules selected for policy export.`nUse the checkboxes to select rules.",
+            "No Selection",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
+    }
+
+    $format = Show-PolicyExportPicker
+    if ([string]::IsNullOrWhiteSpace($format)) { return }
+    $saveDialog = New-Object Microsoft.Win32.SaveFileDialog
+    if ($format -eq "netsh firewall script") {
+        $saveDialog.Filter = "Command script (*.cmd)|*.cmd|All files (*.*)|*.*"
+        $saveDialog.DefaultExt = ".cmd"
+    }
+    elseif ($format -eq "PowerShell New-NetFirewallRule script") {
+        $saveDialog.Filter = "PowerShell script (*.ps1)|*.ps1|All files (*.*)|*.*"
+        $saveDialog.DefaultExt = ".ps1"
+    }
+    else {
+        $saveDialog.Filter = "Registry policy file (*.pol)|*.pol|All files (*.*)|*.*"
+        $saveDialog.DefaultExt = ".pol"
+    }
+    $saveDialog.FileName = "FirewallPolicy_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+    if (-not $saveDialog.ShowDialog()) { return }
+
+    try {
+        if ($format -eq "netsh firewall script") {
+            ConvertTo-NetshFirewallScript -Rules $selectedRules | Set-Content -LiteralPath $saveDialog.FileName -Encoding UTF8
+        }
+        elseif ($format -eq "PowerShell New-NetFirewallRule script") {
+            ConvertTo-PowerShellFirewallScript -Rules $selectedRules | Set-Content -LiteralPath $saveDialog.FileName -Encoding UTF8
+        }
+        else {
+            Write-GpoRegistryPol -Rules $selectedRules -Path $saveDialog.FileName
+        }
+        Update-Status "Exported $($selectedRules.Count) rules as $format"
+        [System.Windows.MessageBox]::Show(
+            "Policy export complete.`n`nRules: $($selectedRules.Count)`nFile: $($saveDialog.FileName)",
+            "Policy Export Complete",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information) | Out-Null
+    }
+    catch {
+        Update-Status "Policy export failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Failed to export policy.`n`nError: $($_.Exception.Message)",
+            "Policy Export Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+}
+
 function Export-SelectedToBackup {
     $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
 
@@ -1749,6 +2002,7 @@ $btnExportCSV.Add_Click({ Export-SelectedToCSV })
 $btnShowChanges.Add_Click({ Show-Changes })
 $btnCompareBackups.Add_Click({ Compare-FWBackups })
 $btnTemplates.Add_Click({ Show-TemplateLibrary })
+$btnExportPolicy.Add_Click({ Export-SelectedPolicy })
 
 $btnClearAll.Add_Click({
     $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()

@@ -68,6 +68,65 @@ Assert-True ($editorSource -match 'function Save-RuleTemplate') "Template save f
 Assert-True ($editorSource -match 'function Insert-RuleTemplate') "Template insertion function is missing."
 Assert-True ($editorSource -match 'FirewallForge_Templates') "Template storage folder is missing."
 Assert-True ($editorSource -match '\$btnTemplates\.Add_Click') "Template library button is not wired."
+Assert-True ($editorSource -match 'function Export-SelectedPolicy') "Policy export function is missing."
+Assert-True ($editorSource -match 'function ConvertTo-NetshFirewallScript') "netsh policy export is missing."
+Assert-True ($editorSource -match 'function ConvertTo-PowerShellFirewallScript') "PowerShell policy export is missing."
+Assert-True ($editorSource -match 'function Write-GpoRegistryPol') "Registry.pol policy export is missing."
+Assert-True ($editorSource -match 'REGFILE_SIGNATURE') "Registry.pol signature is missing."
+Assert-True ($editorSource -match '\$btnExportPolicy\.Add_Click') "Policy export button is not wired."
+
+# Exercise the formatters without starting WPF or changing firewall state.
+$editorTokens = $null
+$editorParseErrors = $null
+$editorAst = [System.Management.Automation.Language.Parser]::ParseFile($editorPath, [ref]$editorTokens, [ref]$editorParseErrors)
+$policyFunctionNames = @(
+    "ConvertTo-NetshFirewallScript",
+    "ConvertTo-PowerShellFirewallScript",
+    "New-GpoFirewallRuleData",
+    "Write-RegistryPolString",
+    "Write-RegistryPolRecord",
+    "Write-GpoRegistryPol"
+)
+$policyFunctionText = foreach ($name in $policyFunctionNames) {
+    $functionAst = $editorAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($functionAst) { $functionAst.Extent.Text }
+}
+try {
+    . ([scriptblock]::Create(($policyFunctionText -join [Environment]::NewLine)))
+    $sampleRule = [PSCustomObject]@{
+        Name = "{11111111-1111-1111-1111-111111111111}"
+        DisplayName = "FirewallForge smoke rule"
+        Description = "Smoke test"
+        Direction = "Outbound"
+        Action = "Allow"
+        Enabled = "True"
+        Profile = "Private"
+        Protocol = "TCP"
+        LocalPort = "Any"
+        RemotePort = "443"
+        Program = "C:\\Windows\\System32\\smoke.exe"
+    }
+    $netshOutput = ConvertTo-NetshFirewallScript -Rules @($sampleRule)
+    $powerShellOutput = ConvertTo-PowerShellFirewallScript -Rules @($sampleRule)
+    Assert-True ($netshOutput -match "netsh advfirewall firewall add rule") "netsh formatter did not emit a rule."
+    Assert-True ($powerShellOutput -match "New-NetFirewallRule") "PowerShell formatter did not emit a rule."
+    $policyPath = Join-Path ([System.IO.Path]::GetTempPath()) ("FirewallForgePolicy_{0}.pol" -f [guid]::NewGuid().ToString("N"))
+    try {
+        Write-GpoRegistryPol -Rules @($sampleRule) -Path $policyPath
+        $policyBytes = [System.IO.File]::ReadAllBytes($policyPath)
+        Assert-True ($policyBytes.Length -gt 16) "Registry.pol output is unexpectedly short."
+        Assert-True ($policyBytes[0] -eq 0x50 -and $policyBytes[1] -eq 0x52 -and $policyBytes[2] -eq 0x65 -and $policyBytes[3] -eq 0x67) "Registry.pol signature is invalid."
+        $policyText = [System.Text.Encoding]::Unicode.GetString($policyBytes)
+        Assert-True ($policyText -match "FirewallRules") "Registry.pol key is missing."
+        Assert-True ($policyText -match "FirewallForge smoke rule") "Registry.pol rule payload is missing."
+    }
+    finally {
+        if (Test-Path -LiteralPath $policyPath) { Remove-Item -LiteralPath $policyPath -Force }
+    }
+}
+catch {
+    Assert-True $false "Policy formatter smoke test failed: $($_.Exception.Message)"
+}
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
