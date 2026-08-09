@@ -305,6 +305,7 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnExportCSV" Content="Export Selected to CSV" Style="{StaticResource SuccessButton}" Width="180"/>
             <Button x:Name="btnShowChanges" Content="Show Changes" Width="120"/>
             <Button x:Name="btnCompareBackups" Content="Compare Backups" Width="140"/>
+            <Button x:Name="btnCompareFleet" Content="Fleet Compare" Width="125"/>
             <Button x:Name="btnTemplates" Content="Templates" Width="105"/>
             <Button x:Name="btnExportPolicy" Content="Export Policy" Width="120"/>
             <Button x:Name="btnClearAll" Content="Clear All" Style="{StaticResource DangerButton}" Width="100"/>
@@ -483,6 +484,7 @@ $btnExportBackup = $Window.FindName("btnExportBackup")
 $btnExportCSV = $Window.FindName("btnExportCSV")
 $btnShowChanges = $Window.FindName("btnShowChanges")
 $btnCompareBackups = $Window.FindName("btnCompareBackups")
+$btnCompareFleet = $Window.FindName("btnCompareFleet")
 $btnTemplates = $Window.FindName("btnTemplates")
 $btnExportPolicy = $Window.FindName("btnExportPolicy")
 $btnClearAll = $Window.FindName("btnClearAll")
@@ -1302,6 +1304,222 @@ function Compare-BackupRuleSets {
     Show-EditorReportWindow -Title "Compare Firewall Backups" -Text $report.ToString()
 }
 
+function Get-MultiMachineProperty {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$DefaultValue = $null
+    )
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $DefaultValue
+    }
+    return $property.Value
+}
+
+function ConvertTo-MultiMachineRule {
+    param([object]$Rule)
+
+    [PSCustomObject][ordered]@{
+        Name = [string](Get-MultiMachineProperty -Object $Rule -Name "Name" -DefaultValue "")
+        DisplayName = [string](Get-MultiMachineProperty -Object $Rule -Name "DisplayName" -DefaultValue (Get-MultiMachineProperty -Object $Rule -Name "Name" -DefaultValue ""))
+        Description = [string](Get-MultiMachineProperty -Object $Rule -Name "Description" -DefaultValue "")
+        Direction = [string](Get-MultiMachineProperty -Object $Rule -Name "Direction" -DefaultValue "Unknown")
+        Action = [string](Get-MultiMachineProperty -Object $Rule -Name "Action" -DefaultValue "Unknown")
+        Enabled = [string](Get-MultiMachineProperty -Object $Rule -Name "Enabled" -DefaultValue "Unknown")
+        Profile = [string](Get-MultiMachineProperty -Object $Rule -Name "Profile" -DefaultValue "Any")
+        Protocol = [string](Get-MultiMachineProperty -Object $Rule -Name "Protocol" -DefaultValue "Any")
+        LocalPort = [string](Get-MultiMachineProperty -Object $Rule -Name "LocalPort" -DefaultValue "Any")
+        RemotePort = [string](Get-MultiMachineProperty -Object $Rule -Name "RemotePort" -DefaultValue "Any")
+        LocalAddress = [string](Get-MultiMachineProperty -Object $Rule -Name "LocalAddress" -DefaultValue "Any")
+        RemoteAddress = [string](Get-MultiMachineProperty -Object $Rule -Name "RemoteAddress" -DefaultValue "Any")
+        Program = [string](Get-MultiMachineProperty -Object $Rule -Name "Program" -DefaultValue "Any")
+        Service = [string](Get-MultiMachineProperty -Object $Rule -Name "Service" -DefaultValue "Any")
+        Group = [string](Get-MultiMachineProperty -Object $Rule -Name "Group" -DefaultValue "")
+    }
+}
+
+function Read-MultiMachineBackup {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $resolvedPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path)
+    $backup = Get-Content -LiteralPath $resolvedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $ruleDetailsProperty = $backup.PSObject.Properties["RuleDetails"]
+    $rawRules = if ($null -ne $ruleDetailsProperty) { @($ruleDetailsProperty.Value) } else { @($backup) }
+    $rules = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($rawRule in $rawRules) {
+        $normalizedRule = ConvertTo-MultiMachineRule -Rule $rawRule
+        if ([string]::IsNullOrWhiteSpace($normalizedRule.Name)) {
+            throw "Backup '$resolvedPath' contains a rule without a Name."
+        }
+        $rules.Add($normalizedRule)
+    }
+
+    $computerName = [string](Get-MultiMachineProperty -Object $backup -Name "ComputerName" -DefaultValue ([System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)))
+    if ([string]::IsNullOrWhiteSpace($computerName)) {
+        $computerName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedPath)
+    }
+
+    [PSCustomObject]@{
+        Path = $resolvedPath
+        MachineName = $computerName
+        BackupDate = [string](Get-MultiMachineProperty -Object $backup -Name "BackupDate" -DefaultValue "")
+        Rules = $rules.ToArray()
+    }
+}
+
+function Get-MultiMachineRuleSignature {
+    param([Parameter(Mandatory = $true)][object]$Rule)
+
+    $properties = @(
+        "DisplayName", "Description", "Direction", "Action", "Enabled", "Profile",
+        "Protocol", "LocalPort", "RemotePort", "LocalAddress", "RemoteAddress", "Program",
+        "Service", "Group"
+    )
+    return (($properties | ForEach-Object { [string]$Rule.$_ }) -join [char]31)
+}
+
+function Compare-MultiMachineRuleSets {
+    param([Parameter(Mandatory = $true)][object[]]$Backups)
+
+    if ($Backups.Count -lt 2) {
+        throw "Select at least two firewall backups for a multi-machine comparison."
+    }
+
+    $ruleNames = @{}
+    foreach ($backup in $Backups) {
+        foreach ($rule in @($backup.Rules)) {
+            if (-not $ruleNames.ContainsKey($rule.Name)) {
+                $ruleNames[$rule.Name] = $true
+            }
+        }
+    }
+
+    $records = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($ruleName in @($ruleNames.Keys | Sort-Object)) {
+        $machineEntries = New-Object System.Collections.Generic.List[PSObject]
+        $signatures = New-Object System.Collections.Generic.List[string]
+        foreach ($backup in $Backups) {
+            $matchingRule = @($backup.Rules | Where-Object { $_.Name -eq $ruleName } | Select-Object -First 1)
+            if ($matchingRule.Count -eq 0) {
+                $machineEntries.Add([PSCustomObject]@{
+                        Machine = $backup.MachineName
+                        Path = $backup.Path
+                        Present = $false
+                        Rule = $null
+                        Signature = ""
+                    })
+            }
+            else {
+                $signature = Get-MultiMachineRuleSignature -Rule $matchingRule[0]
+                $signatures.Add($signature)
+                $machineEntries.Add([PSCustomObject]@{
+                        Machine = $backup.MachineName
+                        Path = $backup.Path
+                        Present = $true
+                        Rule = $matchingRule[0]
+                        Signature = $signature
+                    })
+            }
+        }
+
+        $distinctSignatures = @($signatures | Select-Object -Unique)
+        $missingCount = @($machineEntries | Where-Object { -not $_.Present }).Count
+        $state = if ($missingCount -gt 0) { "Missing" } elseif ($distinctSignatures.Count -gt 1) { "Drift" } else { "Consistent" }
+        $displayRule = @($machineEntries | Where-Object { $_.Present } | Select-Object -First 1).Rule
+        $details = foreach ($entry in $machineEntries) {
+            if ($entry.Present) {
+                $rule = $entry.Rule
+                "[$($entry.Machine)] $($rule.Direction) $($rule.Action), $($rule.Protocol), local $($rule.LocalPort), remote $($rule.RemotePort), program $($rule.Program)"
+            }
+            else {
+                "[$($entry.Machine)] MISSING"
+            }
+        }
+
+        $records.Add([PSCustomObject]@{
+                Name = $ruleName
+                DisplayName = if ($displayRule) { $displayRule.DisplayName } else { $ruleName }
+                State = $state
+                PresentCount = $Backups.Count - $missingCount
+                MachineCount = $Backups.Count
+                VariantCount = $distinctSignatures.Count
+                Details = @($details)
+            })
+    }
+    return $records.ToArray()
+}
+
+function Show-MultiMachineComparisonReport {
+    param(
+        [object[]]$Backups,
+        [object[]]$Records
+    )
+
+    $report = New-Object System.Text.StringBuilder
+    [void]$report.AppendLine("MULTI-MACHINE FIREWALL BACKUP COMPARISON")
+    [void]$report.AppendLine("=" * 100)
+    [void]$report.AppendLine("Endpoints: $($Backups.Count)")
+    foreach ($backup in $Backups) {
+        $backupDateText = if ($backup.BackupDate) { " - $($backup.BackupDate)" } else { "" }
+        [void]$report.AppendLine("  $($backup.MachineName) - $([System.IO.Path]::GetFileName($backup.Path)) - $($backup.Rules.Count) rules$backupDateText")
+    }
+    [void]$report.AppendLine("")
+
+    $consistent = @($Records | Where-Object { $_.State -eq "Consistent" })
+    $drifted = @($Records | Where-Object { $_.State -eq "Drift" })
+    $missing = @($Records | Where-Object { $_.State -eq "Missing" })
+    [void]$report.AppendLine("Rule names: $($Records.Count) | Consistent: $($consistent.Count) | Drifted: $($drifted.Count) | Missing: $($missing.Count)")
+    [void]$report.AppendLine("")
+
+    foreach ($record in @($Records | Sort-Object @{ Expression = { switch ($_.State) { "Drift" { 0; break } "Missing" { 1; break } default { 2 } } } }, DisplayName)) {
+        [void]$report.AppendLine("[$($record.State)] $($record.DisplayName)  <$($record.Name)>")
+        foreach ($detail in $record.Details) {
+            [void]$report.AppendLine("  $detail")
+        }
+    }
+
+    if ($Records.Count -eq 0) {
+        [void]$report.AppendLine("No rules were present in the selected backups.")
+    }
+    Show-EditorReportWindow -Title "Multi-Machine Firewall Comparison" -Text $report.ToString() -Width 1200 -Height 760
+}
+
+function Compare-FWBackupFleet {
+    $openDialog = New-Object Microsoft.Win32.OpenFileDialog
+    $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
+    $openDialog.Title = "Select two or more endpoint backups"
+    $openDialog.Multiselect = $true
+    if (-not $openDialog.ShowDialog()) { return }
+    if ($openDialog.FileNames.Count -lt 2) {
+        [System.Windows.MessageBox]::Show(
+            "Select at least two backup files for a multi-machine comparison.",
+            "Not Enough Backups",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
+    }
+
+    try {
+        Update-Status "Reading $($openDialog.FileNames.Count) endpoint backups..."
+        $backups = foreach ($path in $openDialog.FileNames) {
+            Read-MultiMachineBackup -Path $path
+        }
+        $records = @(Compare-MultiMachineRuleSets -Backups @($backups))
+        Show-MultiMachineComparisonReport -Backups @($backups) -Records $records
+        Update-Status "Multi-machine comparison complete: $($records.Count) rule names"
+    }
+    catch {
+        Update-Status "Multi-machine comparison failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Failed to compare endpoint backups.`n`nError: $($_.Exception.Message)",
+            "Multi-Machine Compare Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+}
+
 function Compare-FWBackups {
     $openDialog = New-Object Microsoft.Win32.OpenFileDialog
     $openDialog.Filter = "Firewall Backup (*.fwbackup)|*.fwbackup|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
@@ -2032,6 +2250,7 @@ $btnExportBackup.Add_Click({ Export-SelectedToBackup })
 $btnExportCSV.Add_Click({ Export-SelectedToCSV })
 $btnShowChanges.Add_Click({ Show-Changes })
 $btnCompareBackups.Add_Click({ Compare-FWBackups })
+$btnCompareFleet.Add_Click({ Compare-FWBackupFleet })
 $btnTemplates.Add_Click({ Show-TemplateLibrary })
 $btnExportPolicy.Add_Click({ Export-SelectedPolicy })
 

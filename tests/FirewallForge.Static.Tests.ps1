@@ -131,6 +131,11 @@ $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
 Assert-True ($editorSource -match 'function Compare-BackupRuleSets') "Two-backup diff engine is missing."
 Assert-True ($editorSource -match '\$btnCompareBackups\.Add_Click') "Two-backup comparison button is not wired."
+Assert-True ($editorSource -match 'function Read-MultiMachineBackup') "Multi-machine backup reader is missing."
+Assert-True ($editorSource -match 'function Compare-MultiMachineRuleSets') "Multi-machine comparison engine is missing."
+Assert-True ($editorSource -match 'function Compare-FWBackupFleet') "Multi-machine comparison workflow is missing."
+Assert-True ($editorSource -match '\$openDialog\.Multiselect = \$true') "Multi-machine comparison does not allow multiple backups."
+Assert-True ($editorSource -match '\$btnCompareFleet\.Add_Click') "Multi-machine comparison button is not wired."
 Assert-True ($editorSource -match 'function Show-MergeStrategyPicker') "Merge strategy picker is missing."
 Assert-True ($editorSource -match 'Prefer newer') "Prefer-newer merge strategy is missing."
 Assert-True ($editorSource -match 'Manual conflict') "Manual merge strategy is missing."
@@ -153,6 +158,49 @@ Assert-True ($editorSource -match '\$chkRegexSearch\.Add_Click') "Editor regex s
 $editorTokens = $null
 $editorParseErrors = $null
 $editorAst = [System.Management.Automation.Language.Parser]::ParseFile($editorPath, [ref]$editorTokens, [ref]$editorParseErrors)
+
+$fleetFunctionNames = @("Get-MultiMachineProperty", "ConvertTo-MultiMachineRule", "Get-MultiMachineRuleSignature", "Compare-MultiMachineRuleSets")
+$fleetFunctionText = foreach ($name in $fleetFunctionNames) {
+    $functionAst = $editorAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($functionAst) { $functionAst.Extent.Text }
+}
+try {
+    . ([scriptblock]::Create(($fleetFunctionText -join [Environment]::NewLine)))
+    $ruleA = ConvertTo-MultiMachineRule -Rule ([PSCustomObject]@{
+            Name = "Shared-Rule"
+            DisplayName = "Shared rule"
+            Direction = "Outbound"
+            Action = "Allow"
+            Enabled = "True"
+            Protocol = "TCP"
+            RemotePort = "443"
+            Program = "C:\\Windows\\System32\\smoke.exe"
+        })
+    $ruleB = ConvertTo-MultiMachineRule -Rule ([PSCustomObject]@{
+            Name = "Shared-Rule"
+            DisplayName = "Shared rule"
+            Direction = "Outbound"
+            Action = "Block"
+            Enabled = "True"
+            Protocol = "TCP"
+            RemotePort = "443"
+            Program = "C:\\Windows\\System32\\smoke.exe"
+        })
+    $machineA = [PSCustomObject]@{ Path = "C:\\A.fwbackup"; MachineName = "Endpoint-A"; Rules = @($ruleA) }
+    $machineB = [PSCustomObject]@{ Path = "C:\\B.fwbackup"; MachineName = "Endpoint-B"; Rules = @($ruleB) }
+    $machineC = [PSCustomObject]@{ Path = "C:\\C.fwbackup"; MachineName = "Endpoint-C"; Rules = @() }
+    $fleetRecords = @(Compare-MultiMachineRuleSets -Backups @($machineA, $machineB, $machineC))
+    $sharedRecord = @($fleetRecords | Where-Object { $_.Name -eq "Shared-Rule" })[0]
+    Assert-True ($sharedRecord.State -eq "Missing") "Multi-machine comparison did not report a missing endpoint rule."
+    Assert-True ($sharedRecord.VariantCount -eq 2) "Multi-machine comparison did not detect rule variants."
+
+    $consistentRecord = @(Compare-MultiMachineRuleSets -Backups @($machineA, [PSCustomObject]@{ Path = "C:\\D.fwbackup"; MachineName = "Endpoint-D"; Rules = @($ruleA) })) | Where-Object { $_.Name -eq "Shared-Rule" }
+    Assert-True ($consistentRecord.State -eq "Consistent") "Multi-machine comparison did not report matching rules as consistent."
+}
+catch {
+    Assert-True $false "Multi-machine comparison smoke test failed: $($_.Exception.Message)"
+}
+
 $policyFunctionNames = @(
     "ConvertTo-NetshFirewallScript",
     "ConvertTo-PowerShellFirewallScript",

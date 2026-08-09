@@ -22,6 +22,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Rule health score audit for broad rules, duplicates, and missing executable paths.
 - Added: Headless FirewallForge.ps1 deployment wrapper with profile validation, idempotent apply, and managed-group pruning.
 - Added: DNS correlation report linking recent blocked connections to Windows DNS Client event 3008 queries and resolved domains.
+- Added: Multi-machine backup comparison with consistent, drifted, and missing rule classification across endpoints.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

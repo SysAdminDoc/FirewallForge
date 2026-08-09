@@ -31,6 +31,7 @@ Offline backup editor:
 - Export modified rulesets back to `.fwbackup` or CSV
 - **Merge Import** - import a second backup and merge new rules into the current set (deduplicates by name)
 - **Show Changes** - diff view comparing current state to the original import (added, deleted, modified rules)
+- **Fleet Compare** - compare two or more endpoint backups and report consistent, drifted, and missing rules
 - **Rule count in title bar** - always shows current rule count
 - Safe sandbox for planning firewall changes
 
