@@ -3405,6 +3405,105 @@ function Show-SavedViews {
     $dialog.ShowDialog() | Out-Null
 }
 
+function Show-BulkTagsDialog {
+    $selectedRules = @($dgRules.SelectedItems)
+    if ($selectedRules.Count -eq 0) {
+        [System.Windows.MessageBox]::Show(
+            "Select one or more rows first. Use Ctrl+Click or Shift+Click for multiple rules.",
+            "No Rules Selected",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+        return
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Bulk Rule Tags"
+    $dialog.Width = 520
+    $dialog.Height = 300
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+
+    $summary = New-Object System.Windows.Controls.TextBlock
+    $summary.Text = "$($selectedRules.Count) selected rule(s); GPO-delivered rules will be skipped."
+    $summary.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $summary.Margin = New-Object System.Windows.Thickness(0, 0, 0, 12)
+    $panel.Children.Add($summary) | Out-Null
+
+    $modeLabel = New-Object System.Windows.Controls.Label
+    $modeLabel.Content = "Operation"
+    $panel.Children.Add($modeLabel) | Out-Null
+    $mode = New-Object System.Windows.Controls.ComboBox
+    foreach ($value in @("Replace tags", "Append tags", "Remove tags")) { $mode.Items.Add($value) | Out-Null }
+    $mode.SelectedIndex = 1
+    $mode.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+    $panel.Children.Add($mode) | Out-Null
+
+    $tagLabel = New-Object System.Windows.Controls.Label
+    $tagLabel.Content = "Tags (comma-separated)"
+    $panel.Children.Add($tagLabel) | Out-Null
+    $tagBox = New-Object System.Windows.Controls.TextBox
+    $tagBox.ToolTip = "Example: review, workstation, temporary"
+    $tagBox.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($tagBox) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 90
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $apply = New-Object System.Windows.Controls.Button
+    $apply.Content = "Apply Tags"
+    $apply.Width = 110
+    $apply.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $apply.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $apply.Add_Click({
+        $requestedTags = @($tagBox.Text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($mode.SelectedIndex -ne 2 -and $requestedTags.Count -eq 0) {
+            [System.Windows.MessageBox]::Show("Enter at least one tag for this operation.", "Missing Tags") | Out-Null
+            return
+        }
+
+        $changed = 0
+        $failed = 0
+        $skipped = 0
+        foreach ($rule in $selectedRules) {
+            if ($rule.IsGpo) {
+                $skipped++
+                continue
+            }
+            try {
+                $existing = @((Get-RuleTags -Description $rule.Description) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                $newTags = switch ($mode.SelectedIndex) {
+                    0 { $requestedTags }
+                    1 { @($existing + $requestedTags | Sort-Object -Unique) }
+                    2 { @($existing | Where-Object { $requestedTags -notcontains $_ }) }
+                }
+                $description = Set-RuleTagsInDescription -Description $rule.Description -Tags ($newTags -join ', ')
+                Set-NetFirewallRule -Name $rule.Name -Description $description -ErrorAction Stop
+                $changed++
+            }
+            catch {
+                $failed++
+            }
+        }
+        $dialog.Close()
+        $status = "Bulk tags complete: $changed changed"
+        if ($skipped -gt 0) { $status += ", $skipped GPO skipped" }
+        if ($failed -gt 0) { $status += ", $failed failed" }
+        Update-Status $status $(if ($failed -gt 0) { "#FFA500" } else { "#00FF00" })
+        Get-FirewallRules
+    }.GetNewClosure())
+    $buttons.Children.Add($apply) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -3436,6 +3535,7 @@ $btnLogViewer.Add_Click({ Show-FirewallLogViewer })
 $btnScheduleBackups.Add_Click({ Show-ScheduledBackupDialog })
 $btnAuditRules.Add_Click({ Show-IPv6CoverageAudit })
 $btnSavedViews.Add_Click({ Show-SavedViews })
+$btnBulkTags.Add_Click({ Show-BulkTagsDialog })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""

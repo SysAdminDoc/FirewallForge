@@ -66,6 +66,9 @@ Assert-True ($managerSource -match 'function Show-SavedViews') "Saved views wind
 Assert-True ($managerSource -match 'function Get-CurrentSavedViewDefinition') "Saved view capture is missing."
 Assert-True ($managerSource -match 'function Apply-SavedView') "Saved view application is missing."
 Assert-True ($managerSource -match '\$btnSavedViews\.Add_Click') "Saved views button is not wired."
+Assert-True ($managerSource -match 'function Show-BulkTagsDialog') "Bulk tags dialog is missing."
+Assert-True ($managerSource -match 'Append tags') "Bulk tag append mode is missing."
+Assert-True ($managerSource -match '\$btnBulkTags\.Add_Click') "Bulk tags button is not wired."
 
 $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
