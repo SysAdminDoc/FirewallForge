@@ -62,6 +62,8 @@ Assert-True ($managerSource -match '\$btnScheduleBackups\.Add_Click') "Scheduled
 Assert-True ($managerSource -match 'function Show-IPv6CoverageAudit') "IPv6 coverage audit is missing."
 Assert-True ($managerSource -match 'function Test-IsIPv4OnlyRule') "IPv4-only rule heuristic is missing."
 Assert-True ($managerSource -match '\$btnAuditRules\.Add_Click') "IPv6 audit button is not wired."
+Assert-True ($managerSource -match 'function Show-RuleHealthScore') "Rule health score is missing."
+Assert-True ($managerSource -match 'function Show-AuditMenu') "Audit menu is missing."
 Assert-True ($managerSource -match 'function Show-SavedViews') "Saved views window is missing."
 Assert-True ($managerSource -match 'function Get-CurrentSavedViewDefinition') "Saved view capture is missing."
 Assert-True ($managerSource -match 'function Apply-SavedView') "Saved view application is missing."

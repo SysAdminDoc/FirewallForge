@@ -3504,6 +3504,86 @@ function Show-BulkTagsDialog {
     $dialog.ShowDialog() | Out-Null
 }
 
+function Show-RuleHealthScore {
+    if (-not $Script:AllRules -or $Script:AllRules.Count -eq 0) {
+        Update-Status "No rules loaded for health scoring" "#FFA500"
+        return
+    }
+
+    $findings = New-Object System.Collections.Generic.List[PSObject]
+    $duplicateGroups = @{}
+    foreach ($rule in $Script:AllRules) {
+        $key = @(
+            [string]$rule.Program, [string]$rule.Direction, [string]$rule.Action,
+            [string]$rule.Protocol, [string]$rule.LocalPort, [string]$rule.RemotePort,
+            [string]$rule.RemoteAddress
+        ) -join "|"
+        if (-not $duplicateGroups.ContainsKey($key)) {
+            $duplicateGroups[$key] = New-Object System.Collections.Generic.List[PSObject]
+        }
+        $duplicateGroups[$key].Add($rule)
+
+        $isBroad = $rule.Enabled -eq "True" -and
+            $rule.Program -eq "Any" -and $rule.Protocol -eq "Any" -and
+            $rule.LocalPort -eq "Any" -and $rule.RemotePort -eq "Any" -and
+            $rule.RemoteAddress -eq "Any"
+        if ($isBroad) {
+            $findings.Add([PSCustomObject]@{ Severity = "High"; Points = 15; Rule = $rule; Reason = "Enabled Any/Any/Any rule applies to every program and address." })
+        }
+
+        if ($rule.Program -and $rule.Program -ne "Any" -and $rule.Program -match '^[A-Za-z]:\\' -and -not (Test-Path -LiteralPath $rule.Program)) {
+            $findings.Add([PSCustomObject]@{ Severity = "Medium"; Points = 10; Rule = $rule; Reason = "Program path does not currently exist." })
+        }
+    }
+
+    foreach ($group in $duplicateGroups.GetEnumerator()) {
+        if ($group.Value.Count -gt 1) {
+            foreach ($rule in @($group.Value | Select-Object -Skip 1)) {
+                $findings.Add([PSCustomObject]@{ Severity = "Medium"; Points = 8; Rule = $rule; Reason = "Duplicate match for program, direction, action, protocol, ports, and remote address." })
+            }
+        }
+    }
+
+    $score = [math]::Max(0, 100 - (($findings | Measure-Object -Property Points -Sum).Sum))
+    $report = New-Object System.Text.StringBuilder
+    [void]$report.AppendLine("FIREWALL RULE HEALTH SCORE")
+    [void]$report.AppendLine("=" * 72)
+    [void]$report.AppendLine("Score: $score / 100")
+    [void]$report.AppendLine("Rules checked: $($Script:AllRules.Count)")
+    [void]$report.AppendLine("Findings: $($findings.Count)")
+    [void]$report.AppendLine("")
+    if ($findings.Count -eq 0) {
+        [void]$report.AppendLine("No broad, duplicate, or missing-program findings were detected.")
+    }
+    else {
+        foreach ($finding in @($findings | Sort-Object @{ Expression = { if ($_.Severity -eq 'High') { 0 } else { 1 } } }, @{ Expression = { $_.Rule.DisplayName } })) {
+            [void]$report.AppendLine("[$($finding.Severity)] -$($finding.Points): $($finding.Rule.DisplayName)")
+            [void]$report.AppendLine("  $($finding.Reason)")
+        }
+    }
+    [void]$report.AppendLine("")
+    [void]$report.AppendLine("This score is a review aid; it does not measure observed traffic or prove that a rule is unused.")
+    Update-Status "Rule health score: $score / 100" $(if ($score -lt 70) { "#FFA500" } else { "#00FF00" })
+    Show-ReportWindow -Title "Rule Health Score" -Text $report.ToString() -Width 900 -Height 650
+}
+
+function Show-AuditMenu {
+    $menu = New-Object System.Windows.Controls.ContextMenu
+    $menu.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x2D, 0x2D, 0x30))
+    $menu.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $ipv6 = New-Object System.Windows.Controls.MenuItem
+    $ipv6.Header = "IPv6 Coverage Audit"
+    $ipv6.Add_Click({ Show-IPv6CoverageAudit }.GetNewClosure())
+    $menu.Items.Add($ipv6) | Out-Null
+    $health = New-Object System.Windows.Controls.MenuItem
+    $health.Header = "Rule Health Score"
+    $health.Add_Click({ Show-RuleHealthScore }.GetNewClosure())
+    $menu.Items.Add($health) | Out-Null
+    $menu.PlacementTarget = $btnAuditRules
+    $menu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+    $menu.IsOpen = $true
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -3533,7 +3613,7 @@ $btnRulePriority.Add_Click({ Test-FirewallRulePriority })
 $btnGroupOps.Add_Click({ Show-GroupOperations })
 $btnLogViewer.Add_Click({ Show-FirewallLogViewer })
 $btnScheduleBackups.Add_Click({ Show-ScheduledBackupDialog })
-$btnAuditRules.Add_Click({ Show-IPv6CoverageAudit })
+$btnAuditRules.Add_Click({ Show-AuditMenu })
 $btnSavedViews.Add_Click({ Show-SavedViews })
 $btnBulkTags.Add_Click({ Show-BulkTagsDialog })
 $btnSearch.Add_Click({ Search-Rules })

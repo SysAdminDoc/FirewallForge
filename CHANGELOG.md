@@ -19,6 +19,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Regex search mode to the offline editor's rule filter with invalid-pattern feedback.
 - Added: Named manager views for filters, regex state, column layout, and sort descriptions.
 - Added: Bulk tag replace, append, and remove operations with GPO protection.
+- Added: Rule health score audit for broad rules, duplicates, and missing executable paths.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 
