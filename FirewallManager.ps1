@@ -602,6 +602,7 @@ $Script:BackupFolder = Join-Path $env:USERPROFILE "FirewallBackups"
 $Script:SearchActive = $false
 $Script:ConnectionMonitorTimer = $null
 $Script:SeenConnectionEvents = @{}
+$Script:ConnectionMonitorLastTime = (Get-Date).AddSeconds(-5)
 $Script:ViewsFolder = Join-Path $env:APPDATA "FirewallForge\Views"
 Write-Host "  - Controls bound successfully`n" -ForegroundColor Gray
 
@@ -669,6 +670,316 @@ function Show-ReportWindow {
 
     $reportWindow.Content = $grid
     $reportWindow.ShowDialog() | Out-Null
+}
+
+function Get-ConnectionEventValue {
+    param(
+        [hashtable]$Data,
+        [string[]]$Names,
+        [string]$Default = ""
+    )
+
+    foreach ($name in $Names) {
+        if ($Data.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$Data[$name])) {
+            return [string]$Data[$name]
+        }
+    }
+
+    return $Default
+}
+
+function Convert-ConnectionEvent {
+    param([System.Diagnostics.Eventing.Reader.EventRecord]$EventRecord)
+
+    $data = @{}
+    try {
+        $eventXml = [xml]$EventRecord.ToXml()
+        foreach ($item in @($eventXml.Event.EventData.Data)) {
+            if ($item.Name) {
+                $data[[string]$item.Name] = [string]$item.'#text'
+            }
+        }
+    }
+    catch {
+        return $null
+    }
+
+    $directionValue = Get-ConnectionEventValue -Data $data -Names @("Direction") -Default "Unknown"
+    $direction = switch -Regex ($directionValue) {
+        "^(%%)?14592$|Inbound" { "Inbound"; break }
+        "^(%%)?14593$|Outbound" { "Outbound"; break }
+        default { "Unknown" }
+    }
+
+    $protocolValue = Get-ConnectionEventValue -Data $data -Names @("Protocol") -Default ""
+    $protocol = switch ($protocolValue) {
+        "6" { "TCP"; break }
+        "17" { "UDP"; break }
+        "1" { "ICMPv4"; break }
+        "58" { "ICMPv6"; break }
+        default { if ($protocolValue) { $protocolValue } else { "Any" } }
+    }
+
+    $application = Get-ConnectionEventValue -Data $data -Names @("ApplicationName", "ApplicationInformation") -Default "Unknown application"
+    $processId = Get-ConnectionEventValue -Data $data -Names @("ProcessID", "ProcessId") -Default ""
+    $sourceAddress = Get-ConnectionEventValue -Data $data -Names @("SourceAddress") -Default "Any"
+    $sourcePort = Get-ConnectionEventValue -Data $data -Names @("SourcePort") -Default "Any"
+    $destinationAddress = Get-ConnectionEventValue -Data $data -Names @("DestAddress", "DestinationAddress") -Default "Any"
+    $destinationPort = Get-ConnectionEventValue -Data $data -Names @("DestPort", "DestinationPort") -Default "Any"
+
+    [PSCustomObject]@{
+        RecordId = $EventRecord.RecordId
+        Timestamp = $EventRecord.TimeCreated
+        EventId = [int]$EventRecord.Id
+        Action = if ([int]$EventRecord.Id -eq 5157) { "Blocked" } else { "Allowed" }
+        Program = $application
+        ProcessId = $processId
+        Direction = $direction
+        SourceAddress = $sourceAddress
+        SourcePort = $sourcePort
+        DestinationAddress = $destinationAddress
+        DestinationPort = $destinationPort
+        Protocol = $protocol
+    }
+}
+
+function Get-ConnectionEvents {
+    param([datetime]$StartTime)
+
+    $events = @(Get-WinEvent -FilterHashtable @{
+        LogName = "Security"
+        Id = @(5156, 5157)
+        StartTime = $StartTime
+    } -MaxEvents 50 -ErrorAction Stop | Sort-Object TimeCreated)
+
+    foreach ($eventRecord in $events) {
+        $connectionEvent = Convert-ConnectionEvent -EventRecord $eventRecord
+        if ($connectionEvent) {
+            $connectionEvent
+        }
+    }
+}
+
+function Show-ConnectionDecision {
+    param([object]$ConnectionEvent)
+
+    $programName = [System.IO.Path]::GetFileName($ConnectionEvent.Program)
+    if ([string]::IsNullOrWhiteSpace($programName)) {
+        $programName = $ConnectionEvent.Program
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Firewall connection detected"
+    $dialog.Width = 560
+    $dialog.Height = 330
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.ResizeMode = "NoResize"
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = "Ignore"
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+
+    $heading = New-Object System.Windows.Controls.TextBlock
+    $heading.Text = "New $($ConnectionEvent.Action.ToLowerInvariant()) connection"
+    $heading.FontSize = 20
+    $heading.FontWeight = "Bold"
+    $heading.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $heading.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($heading) | Out-Null
+
+    $details = New-Object System.Windows.Controls.TextBlock
+    $details.Text = @(
+        "Program: $programName"
+        "Path: $($ConnectionEvent.Program)"
+        "Direction: $($ConnectionEvent.Direction)"
+        "Remote: $($ConnectionEvent.DestinationAddress):$($ConnectionEvent.DestinationPort)"
+        "Protocol: $($ConnectionEvent.Protocol)    Process ID: $($ConnectionEvent.ProcessId)"
+        ""
+        "Choose an action to create a persistent firewall rule."
+    ) -join [Environment]::NewLine
+    $details.TextWrapping = "Wrap"
+    $details.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $details.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($details) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    foreach ($choice in @(
+        @{ Label = "Allow"; Value = "Allow"; Color = @(0x38, 0x8E, 0x3C) }
+        @{ Label = "Block"; Value = "Block"; Color = @(0xD3, 0x2F, 0x2F) }
+        @{ Label = "Ignore"; Value = "Ignore"; Color = @(0x55, 0x55, 0x55) }
+    )) {
+        $button = New-Object System.Windows.Controls.Button
+        $button.Content = $choice.Label
+        $button.Width = 100
+        $button.Margin = New-Object System.Windows.Thickness(5, 0, 0, 0)
+        $button.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+        $rgb = $choice.Color
+        $button.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb($rgb[0], $rgb[1], $rgb[2]))
+        $value = $choice.Value
+        $button.Add_Click({ $dialog.Tag = $value; $dialog.Close() }.GetNewClosure())
+        $buttons.Children.Add($button) | Out-Null
+    }
+    $panel.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
+function Add-ConnectionDecisionRule {
+    param(
+        [object]$ConnectionEvent,
+        [ValidateSet("Allow", "Block")]
+        [string]$Action
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ConnectionEvent.Program) -or
+        $ConnectionEvent.Program -eq "Unknown application" -or
+        $ConnectionEvent.Program -notmatch "^[A-Za-z]:\\|^\\\\") {
+        throw "Windows did not provide a usable application path for this event."
+    }
+    if ($ConnectionEvent.Direction -notin @("Inbound", "Outbound")) {
+        throw "Windows did not provide a usable connection direction for this event."
+    }
+
+    $programName = [System.IO.Path]::GetFileNameWithoutExtension($ConnectionEvent.Program)
+    if ([string]::IsNullOrWhiteSpace($programName)) {
+        $programName = "connection"
+    }
+    $displayName = "FirewallForge Prompt - $Action $programName ($($ConnectionEvent.Direction)) - $([guid]::NewGuid().ToString().Substring(0, 8))"
+    $params = @{
+        DisplayName = $displayName
+        Direction = $ConnectionEvent.Direction
+        Action = $Action
+        Program = $ConnectionEvent.Program
+        Profile = "Any"
+        Enabled = "True"
+        Description = "Created by FirewallForge connection monitor"
+        ErrorAction = "Stop"
+    }
+
+    if ($ConnectionEvent.Protocol -in @("TCP", "UDP")) {
+        $params.Protocol = $ConnectionEvent.Protocol
+        if ($ConnectionEvent.Direction -eq "Outbound") {
+            if ($ConnectionEvent.DestinationPort -match "^\d+(?:-\d+)?$") {
+                $params.RemotePort = $ConnectionEvent.DestinationPort
+            }
+            if ($ConnectionEvent.DestinationAddress -and $ConnectionEvent.DestinationAddress -notin @("Any", "-")) {
+                $params.RemoteAddress = $ConnectionEvent.DestinationAddress
+            }
+        }
+        else {
+            if ($ConnectionEvent.DestinationPort -match "^\d+(?:-\d+)?$") {
+                $params.LocalPort = $ConnectionEvent.DestinationPort
+            }
+            if ($ConnectionEvent.SourceAddress -and $ConnectionEvent.SourceAddress -notin @("Any", "-")) {
+                $params.RemoteAddress = $ConnectionEvent.SourceAddress
+            }
+            if ($ConnectionEvent.SourcePort -match "^\d+(?:-\d+)?$") {
+                $params.RemotePort = $ConnectionEvent.SourcePort
+            }
+        }
+    }
+
+    New-NetFirewallRule @params | Out-Null
+}
+
+function Process-ConnectionMonitorTick {
+    try {
+        $events = @(Get-ConnectionEvents -StartTime $Script:ConnectionMonitorLastTime)
+        if ($events.Count -eq 0) {
+            return
+        }
+
+        $Script:ConnectionMonitorLastTime = ($events | Sort-Object Timestamp | Select-Object -Last 1).Timestamp
+        foreach ($connectionEvent in $events) {
+            $signature = @(
+                $connectionEvent.Program, $connectionEvent.Direction, $connectionEvent.Protocol,
+                $connectionEvent.DestinationAddress, $connectionEvent.DestinationPort
+            ) -join "|"
+            if ($Script:SeenConnectionEvents.ContainsKey($signature) -and
+                ((Get-Date) - $Script:SeenConnectionEvents[$signature]).TotalMinutes -lt 5) {
+                continue
+            }
+            $Script:SeenConnectionEvents[$signature] = Get-Date
+
+            $decision = Show-ConnectionDecision -ConnectionEvent $connectionEvent
+            if ($decision -in @("Allow", "Block")) {
+                try {
+                    Add-ConnectionDecisionRule -ConnectionEvent $connectionEvent -Action $decision
+                    Update-Status "Created $decision rule from connection monitor" "#00FF00"
+                    Get-FirewallRules
+                }
+                catch {
+                    Update-Status "Connection rule failed: $($_.Exception.Message)" "#FF0000"
+                    [System.Windows.MessageBox]::Show(
+                        "Could not create the connection rule.`n`nError: $($_.Exception.Message)",
+                        "Connection Monitor Error",
+                        [System.Windows.MessageBoxButton]::OK,
+                        [System.Windows.MessageBoxImage]::Error) | Out-Null
+                }
+            }
+            else {
+                Update-Status "Ignored connection from $($connectionEvent.Program)" "#808080"
+            }
+
+            # Avoid opening a burst of modal dialogs in one timer tick.
+            break
+        }
+
+        $expired = @($Script:SeenConnectionEvents.GetEnumerator() | Where-Object {
+            ((Get-Date) - $_.Value).TotalMinutes -ge 5
+        })
+        foreach ($entry in $expired) {
+            $Script:SeenConnectionEvents.Remove($entry.Key)
+        }
+    }
+    catch {
+        Stop-ConnectionMonitor -ErrorMessage "Connection monitor stopped: $($_.Exception.Message)"
+    }
+}
+
+function Start-ConnectionMonitor {
+    if ($Script:ConnectionMonitorTimer) {
+        return
+    }
+
+    $Script:ConnectionMonitorLastTime = (Get-Date).AddSeconds(-5)
+    $Script:SeenConnectionEvents = @{}
+    $Script:ConnectionMonitorTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $Script:ConnectionMonitorTimer.Interval = New-Object System.TimeSpan(0, 0, 3)
+    $Script:ConnectionMonitorTimer.Add_Tick({ Process-ConnectionMonitorTick })
+    $Script:ConnectionMonitorTimer.Start()
+    $btnConnectionMonitor.Content = "Monitor On"
+    Update-Status "Connection monitor enabled (Security events 5156/5157)" "#00FF00"
+}
+
+function Stop-ConnectionMonitor {
+    param([string]$ErrorMessage = "")
+
+    if ($Script:ConnectionMonitorTimer) {
+        $Script:ConnectionMonitorTimer.Stop()
+        $Script:ConnectionMonitorTimer = $null
+    }
+    $btnConnectionMonitor.Content = "Monitor Off"
+    if ($ErrorMessage) {
+        Update-Status $ErrorMessage "#FFA500"
+    }
+    else {
+        Update-Status "Connection monitor disabled" "#808080"
+    }
+}
+
+function Toggle-ConnectionMonitor {
+    if ($Script:ConnectionMonitorTimer) {
+        Stop-ConnectionMonitor
+    }
+    else {
+        Start-ConnectionMonitor
+    }
 }
 
 function Get-RuleTags {
@@ -1773,6 +2084,7 @@ $btnExportCSV.Add_Click({ Export-RulesToCSV })
 $btnFindDuplicates.Add_Click({ Find-DuplicateRules })
 $btnQuickBlock.Add_Click({ Show-QuickBlockMenu })
 $btnProgramWizard.Add_Click({ Show-ProgramRuleWizard })
+$btnConnectionMonitor.Add_Click({ Toggle-ConnectionMonitor })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
@@ -1818,6 +2130,13 @@ $txtSearch.Add_KeyDown({
         Write-Host "Window rendered, now loading firewall rules..." -ForegroundColor Cyan
         Get-FirewallRules
         Write-Host "Firewall rules loaded." -ForegroundColor Green
+    })
+
+    $Window.Add_Closed({
+        if ($Script:ConnectionMonitorTimer) {
+            $Script:ConnectionMonitorTimer.Stop()
+            $Script:ConnectionMonitorTimer = $null
+        }
     })
 
     # Show window

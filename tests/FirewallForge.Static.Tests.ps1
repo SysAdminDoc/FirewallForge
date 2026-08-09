@@ -36,6 +36,9 @@ Assert-True ($managerSource -match '\$btnProgramWizard\.Add_Click') "Program wiz
 Assert-True ($managerSource -match 'Block In \+ Out') "Program wizard block preset is missing."
 Assert-True ($managerSource -match 'Allow In') "Program wizard inbound preset is missing."
 Assert-True ($managerSource -match 'Allow Out') "Program wizard outbound preset is missing."
+Assert-True ($managerSource -match 'function Toggle-ConnectionMonitor') "Connection monitor toggle is missing."
+Assert-True ($managerSource -match 'Id = @\(5156, 5157\)') "Connection monitor event query is missing 5156/5157."
+Assert-True ($managerSource -match '\$btnConnectionMonitor\.Add_Click') "Connection monitor button is not wired."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
