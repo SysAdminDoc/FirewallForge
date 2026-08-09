@@ -1632,6 +1632,137 @@ function Show-QuickBlockMenu {
     $contextMenu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
 }
 
+function Show-ProgramRuleWizard {
+    $fileBrowser = New-Object Microsoft.Win32.OpenFileDialog
+    $fileBrowser.Filter = "Executables (*.exe)|*.exe|All Files (*.*)|*.*"
+    $fileBrowser.Title = "Select a program"
+
+    if (-not $fileBrowser.ShowDialog()) {
+        return
+    }
+
+    $programPath = $fileBrowser.FileName
+    $programName = [System.IO.Path]::GetFileNameWithoutExtension($programPath)
+    $matchingRules = @($Script:AllRules | Where-Object {
+        $_.Program -and $_.Program -ne "Any" -and $_.Program -ieq $programPath
+    })
+
+    $summary = New-Object System.Text.StringBuilder
+    [void]$summary.AppendLine("Program: $programPath")
+    [void]$summary.AppendLine("Existing rules: $($matchingRules.Count)")
+    [void]$summary.AppendLine("")
+    if ($matchingRules.Count -eq 0) {
+        [void]$summary.AppendLine("No existing rules match this program path.")
+    }
+    else {
+        foreach ($rule in $matchingRules) {
+            $state = if ($rule.Enabled -eq "True") { "Enabled" } else { "Disabled" }
+            [void]$summary.AppendLine("- $($rule.DisplayName) [$($rule.Direction), $($rule.Action), $state, Profile: $($rule.Profile)]")
+        }
+    }
+
+    $wizard = New-Object System.Windows.Window
+    $wizard.Title = "Program Rule Wizard - $programName"
+    $wizard.Width = 720
+    $wizard.Height = 520
+    $wizard.WindowStartupLocation = "CenterOwner"
+    $wizard.Owner = $Window
+    $wizard.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    $grid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+    $grid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = "Auto" }))
+
+    $details = New-Object System.Windows.Controls.TextBox
+    $details.Text = $summary.ToString()
+    $details.IsReadOnly = $true
+    $details.AcceptsReturn = $true
+    $details.TextWrapping = "Wrap"
+    $details.VerticalScrollBarVisibility = "Auto"
+    $details.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $details.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $details.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $details.FontSize = 12
+    [System.Windows.Controls.Grid]::SetRow($details, 0)
+    $grid.Children.Add($details) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $buttons.Margin = New-Object System.Windows.Thickness(0, 12, 0, 0)
+
+    $closeButton = New-Object System.Windows.Controls.Button
+    $closeButton.Content = "Close"
+    $closeButton.Width = 100
+    $closeButton.Add_Click({ $wizard.Close() }.GetNewClosure())
+    $buttons.Children.Add($closeButton) | Out-Null
+
+    $createPreset = {
+        param([string]$Preset)
+
+        $confirm = [System.Windows.MessageBox]::Show(
+            "Create the '$Preset' firewall preset for:`n$programPath`n`nExisting matching rules: $($matchingRules.Count)",
+            "Create Program Rules",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question)
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+            return
+        }
+
+        try {
+            $directions = switch ($Preset) {
+                "Block" { @("Inbound", "Outbound") }
+                "Allow In" { @("Inbound") }
+                "Allow Out" { @("Outbound") }
+            }
+            $action = if ($Preset -eq "Block") { "Block" } else { "Allow" }
+            foreach ($direction in $directions) {
+                $displayName = "FirewallForge - $action $programName ($direction)"
+                New-NetFirewallRule -DisplayName $displayName -Direction $direction -Action $action `
+                    -Program $programPath -Profile Any -Enabled True `
+                    -Description "Created by FirewallForge Program Wizard" -ErrorAction Stop | Out-Null
+            }
+
+            Update-Status "Created $Preset rule preset for $programName" "#00FF00"
+            $wizard.Close()
+            Get-FirewallRules
+        }
+        catch {
+            Update-Status "Program wizard failed: $($_.Exception.Message)" "#FF0000"
+            [System.Windows.MessageBox]::Show(
+                "Failed to create program rules.`n`nError: $($_.Exception.Message)",
+                "Program Wizard Error",
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Error) | Out-Null
+        }
+    }.GetNewClosure()
+
+    foreach ($preset in @(
+        @{ Content = "Block In + Out"; Value = "Block"; Style = "DangerButton"; Width = 135 },
+        @{ Content = "Allow In"; Value = "Allow In"; Style = "SuccessButton"; Width = 100 },
+        @{ Content = "Allow Out"; Value = "Allow Out"; Style = "SuccessButton"; Width = 105 }
+    )) {
+        $button = New-Object System.Windows.Controls.Button
+        $button.Content = $preset.Content
+        $button.Width = $preset.Width
+        if ($preset.Style -eq "DangerButton") {
+            $button.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xD3, 0x2F, 0x2F))
+        }
+        else {
+            $button.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+        }
+        $button.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+        $value = $preset.Value
+        $button.Add_Click({ & $createPreset $value }.GetNewClosure())
+        $buttons.Children.Insert(0, $button)
+    }
+
+    [System.Windows.Controls.Grid]::SetRow($buttons, 1)
+    $grid.Children.Add($buttons) | Out-Null
+    $wizard.Content = $grid
+    $wizard.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -1641,6 +1772,7 @@ $btnRefresh.Add_Click({ Get-FirewallRules })
 $btnExportCSV.Add_Click({ Export-RulesToCSV })
 $btnFindDuplicates.Add_Click({ Find-DuplicateRules })
 $btnQuickBlock.Add_Click({ Show-QuickBlockMenu })
+$btnProgramWizard.Add_Click({ Show-ProgramRuleWizard })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
