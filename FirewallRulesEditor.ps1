@@ -305,6 +305,7 @@ Add-Type -AssemblyName System.Windows.Forms
             <Button x:Name="btnExportCSV" Content="Export Selected to CSV" Style="{StaticResource SuccessButton}" Width="180"/>
             <Button x:Name="btnShowChanges" Content="Show Changes" Width="120"/>
             <Button x:Name="btnCompareBackups" Content="Compare Backups" Width="140"/>
+            <Button x:Name="btnTemplates" Content="Templates" Width="105"/>
             <Button x:Name="btnClearAll" Content="Clear All" Style="{StaticResource DangerButton}" Width="100"/>
         </WrapPanel>
 
@@ -480,6 +481,7 @@ $btnExportBackup = $Window.FindName("btnExportBackup")
 $btnExportCSV = $Window.FindName("btnExportCSV")
 $btnShowChanges = $Window.FindName("btnShowChanges")
 $btnCompareBackups = $Window.FindName("btnCompareBackups")
+$btnTemplates = $Window.FindName("btnTemplates")
 $btnClearAll = $Window.FindName("btnClearAll")
 $btnSelectAll = $Window.FindName("btnSelectAll")
 $btnSelectNone = $Window.FindName("btnSelectNone")
@@ -1322,6 +1324,291 @@ function Compare-FWBackups {
     }
 }
 
+function Get-TemplateFolder {
+    $folder = Join-Path $env:USERPROFILE "FirewallForge_Templates"
+    if (-not (Test-Path -LiteralPath $folder)) {
+        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+    }
+    return $folder
+}
+
+function Get-RuleTemplateRecords {
+    $folder = Get-TemplateFolder
+    $records = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($file in @(Get-ChildItem -LiteralPath $folder -Filter "*.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        try {
+            $data = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $templateName = if ($data.TemplateName) { [string]$data.TemplateName } else { $file.BaseName }
+            $ruleData = if ($data.Rule) { $data.Rule } else { $data }
+            $records.Add([PSCustomObject]@{
+                Name = $templateName
+                Path = $file.FullName
+                Rule = $ruleData
+                CreatedDate = $data.CreatedDate
+            })
+        }
+        catch {
+            # Ignore malformed templates; the library remains usable and the file can be removed.
+        }
+    }
+    return $records
+}
+
+function Show-TemplateNameInput {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Save Rule Template"
+    $dialog.Width = 420
+    $dialog.Height = 190
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.ResizeMode = "NoResize"
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $dialog.Tag = $null
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+    $label = New-Object System.Windows.Controls.Label
+    $label.Content = "Template name"
+    $panel.Children.Add($label) | Out-Null
+    $nameBox = New-Object System.Windows.Controls.TextBox
+    $nameBox.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($nameBox) | Out-Null
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 90
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $save = New-Object System.Windows.Controls.Button
+    $save.Content = "Save"
+    $save.Width = 90
+    $save.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+    $save.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $save.Add_Click({
+        if (-not [string]::IsNullOrWhiteSpace($nameBox.Text)) {
+            $dialog.Tag = $nameBox.Text.Trim()
+            $dialog.Close()
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($save) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+    return [string]$dialog.Tag
+}
+
+function Save-RuleTemplate {
+    param(
+        [object]$Rule,
+        [string]$TemplateName
+    )
+
+    $safeName = ($TemplateName -replace '[\\/:*?"<>|]', '_').Trim()
+    if ([string]::IsNullOrWhiteSpace($safeName)) {
+        throw "Template name cannot be empty."
+    }
+    $folder = Get-TemplateFolder
+    $path = Join-Path $folder "$safeName.json"
+    if (Test-Path -LiteralPath $path) {
+        $confirm = [System.Windows.MessageBox]::Show(
+            "A template named '$safeName' already exists. Replace it?",
+            "Replace Template",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question)
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+            return $false
+        }
+    }
+
+    $template = [ordered]@{
+        TemplateName = $safeName
+        CreatedDate = (Get-Date).ToString("o")
+        Rule = [ordered]@{
+            DisplayName = $Rule.DisplayName
+            Description = $Rule.Description
+            Direction = $Rule.Direction
+            Action = $Rule.Action
+            Enabled = $Rule.Enabled
+            Profile = $Rule.Profile
+            Protocol = $Rule.Protocol
+            LocalPort = $Rule.LocalPort
+            RemotePort = $Rule.RemotePort
+            Program = $Rule.Program
+        }
+    }
+    $template | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding UTF8
+    return $true
+}
+
+function Insert-RuleTemplate {
+    param([object]$TemplateRecord)
+
+    $data = $TemplateRecord.Rule
+    $rule = New-RuleObject `
+        -Name ("Template_" + [guid]::NewGuid().ToString().Substring(0, 8)) `
+        -DisplayName $data.DisplayName `
+        -Description $data.Description `
+        -Direction $(if ($data.Direction) { $data.Direction } else { "Inbound" }) `
+        -Action $(if ($data.Action) { $data.Action } else { "Allow" }) `
+        -Enabled $(if ($data.Enabled) { $data.Enabled } else { "True" }) `
+        -Profile $(if ($data.Profile) { $data.Profile } else { "Any" }) `
+        -Protocol $(if ($data.Protocol) { $data.Protocol } else { "Any" }) `
+        -LocalPort $(if ($data.LocalPort) { $data.LocalPort } else { "Any" }) `
+        -RemotePort $(if ($data.RemotePort) { $data.RemotePort } else { "Any" }) `
+        -Program $(if ($data.Program) { $data.Program } else { "Any" }) `
+        -Selected $true
+    $Script:AllRules.Add($rule)
+    $Script:FilteredView = $null
+    $txtSearch.Text = ""
+    $dgRules.ItemsSource = $null
+    $dgRules.ItemsSource = $Script:AllRules
+    Update-Counts
+    Update-Status "Inserted template '$($TemplateRecord.Name)'"
+}
+
+function Show-TemplateLibrary {
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Firewall Rule Templates"
+    $dialog.Width = 720
+    $dialog.Height = 520
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    $contentRow = New-Object System.Windows.Controls.RowDefinition
+    $contentRow.Height = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($contentRow)
+    $buttonRow = New-Object System.Windows.Controls.RowDefinition
+    $buttonRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($buttonRow)
+    $listColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $listColumn.Width = New-Object System.Windows.GridLength(220)
+    $grid.ColumnDefinitions.Add($listColumn)
+    $previewColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $previewColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.ColumnDefinitions.Add($previewColumn)
+
+    $list = New-Object System.Windows.Controls.ListBox
+    [System.Windows.Controls.Grid]::SetRow($list, 0)
+    [System.Windows.Controls.Grid]::SetColumn($list, 0)
+    $grid.Children.Add($list) | Out-Null
+    $preview = New-Object System.Windows.Controls.TextBox
+    $preview.IsReadOnly = $true
+    $preview.AcceptsReturn = $true
+    $preview.VerticalScrollBarVisibility = "Auto"
+    $preview.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $preview.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $preview.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $preview.Margin = New-Object System.Windows.Thickness(12, 0, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($preview, 0)
+    [System.Windows.Controls.Grid]::SetColumn($preview, 1)
+    $grid.Children.Add($preview) | Out-Null
+
+    $templateState = @{ Records = @() }
+    $refresh = {
+        $templateState.Records = @(Get-RuleTemplateRecords)
+        $list.Items.Clear()
+        foreach ($record in $templateState.Records) { $list.Items.Add($record.Name) | Out-Null }
+        if ($templateState.Records.Count -gt 0) { $list.SelectedIndex = 0 }
+        else { $preview.Text = "No templates saved yet." }
+    }.GetNewClosure()
+    $getSelected = {
+        if ($list.SelectedIndex -lt 0 -or $list.SelectedIndex -ge $templateState.Records.Count) { return $null }
+        return $templateState.Records[$list.SelectedIndex]
+    }.GetNewClosure()
+    $list.Add_SelectionChanged({
+        $record = & $getSelected
+        if ($record) {
+            $preview.Text = @(
+                "Template: $($record.Name)"
+                "Created: $($record.CreatedDate)"
+                ""
+                "DisplayName: $($record.Rule.DisplayName)"
+                "Direction: $($record.Rule.Direction)"
+                "Action: $($record.Rule.Action)"
+                "Enabled: $($record.Rule.Enabled)"
+                "Profile: $($record.Rule.Profile)"
+                "Protocol: $($record.Rule.Protocol)"
+                "LocalPort: $($record.Rule.LocalPort)"
+                "RemotePort: $($record.Rule.RemotePort)"
+                "Program: $($record.Rule.Program)"
+            ) -join [Environment]::NewLine
+        }
+    }.GetNewClosure())
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    [System.Windows.Controls.Grid]::SetRow($buttons, 1)
+    [System.Windows.Controls.Grid]::SetColumnSpan($buttons, 2)
+    $saveButton = New-Object System.Windows.Controls.Button
+    $saveButton.Content = "Save Selected"
+    $saveButton.Width = 125
+    $saveButton.Add_Click({
+        $rule = $dgRules.SelectedItem
+        if ($null -eq $rule) {
+            [System.Windows.MessageBox]::Show("Select a rule in the editor first.", "No Rule Selected") | Out-Null
+            return
+        }
+        $name = Show-TemplateNameInput
+        if ($name) {
+            try {
+                if (Save-RuleTemplate -Rule $rule -TemplateName $name) {
+                    & $refresh
+                    Update-Status "Saved template '$name'"
+                }
+            }
+            catch {
+                [System.Windows.MessageBox]::Show("Could not save template.`n`n$($_.Exception.Message)", "Template Error") | Out-Null
+            }
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($saveButton) | Out-Null
+
+    $insertButton = New-Object System.Windows.Controls.Button
+    $insertButton.Content = "Insert Selected"
+    $insertButton.Width = 125
+    $insertButton.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+    $insertButton.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $insertButton.Add_Click({
+        $record = & $getSelected
+        if ($record) {
+            Insert-RuleTemplate -TemplateRecord $record
+            $dialog.Close()
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($insertButton) | Out-Null
+
+    $deleteButton = New-Object System.Windows.Controls.Button
+    $deleteButton.Content = "Delete Template"
+    $deleteButton.Width = 125
+    $deleteButton.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xD3, 0x2F, 0x2F))
+    $deleteButton.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $deleteButton.Add_Click({
+        $record = & $getSelected
+        if ($record) {
+            $confirm = [System.Windows.MessageBox]::Show("Delete template '$($record.Name)'?", "Delete Template", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Warning)
+            if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
+                Remove-Item -LiteralPath $record.Path -Force
+                & $refresh
+            }
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($deleteButton) | Out-Null
+    $closeButton = New-Object System.Windows.Controls.Button
+    $closeButton.Content = "Close"
+    $closeButton.Width = 90
+    $closeButton.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($closeButton) | Out-Null
+    $grid.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $grid
+    & $refresh
+    $dialog.ShowDialog() | Out-Null
+}
+
 function Export-SelectedToBackup {
     $selectedRules = @($Script:AllRules | Where-Object { $_.Selected })
 
@@ -1461,6 +1748,7 @@ $btnExportBackup.Add_Click({ Export-SelectedToBackup })
 $btnExportCSV.Add_Click({ Export-SelectedToCSV })
 $btnShowChanges.Add_Click({ Show-Changes })
 $btnCompareBackups.Add_Click({ Compare-FWBackups })
+$btnTemplates.Add_Click({ Show-TemplateLibrary })
 
 $btnClearAll.Add_Click({
     $Script:AllRules = [System.Collections.Generic.List[PSObject]]::new()

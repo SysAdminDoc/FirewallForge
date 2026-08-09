@@ -63,6 +63,11 @@ Assert-True ($editorSource -match 'function Show-MergeStrategyPicker') "Merge st
 Assert-True ($editorSource -match 'Prefer newer') "Prefer-newer merge strategy is missing."
 Assert-True ($editorSource -match 'Manual conflict') "Manual merge strategy is missing."
 Assert-True ($editorSource -match 'function Resolve-MergeConflict') "Manual merge conflict resolver is missing."
+Assert-True ($editorSource -match 'function Show-TemplateLibrary') "Template library window is missing."
+Assert-True ($editorSource -match 'function Save-RuleTemplate') "Template save function is missing."
+Assert-True ($editorSource -match 'function Insert-RuleTemplate') "Template insertion function is missing."
+Assert-True ($editorSource -match 'FirewallForge_Templates') "Template storage folder is missing."
+Assert-True ($editorSource -match '\$btnTemplates\.Add_Click') "Template library button is not wired."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
