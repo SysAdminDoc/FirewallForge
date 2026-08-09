@@ -14,6 +14,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Merge conflict strategies for prefer-newer, prefer-imported, and per-rule manual decisions.
 - Added: Offline rule template library with JSON save, browse, insert, and delete actions.
 - Added: Policy export to netsh, PowerShell, and binary GPO Registry.pol formats.
+- Added: Task Scheduler integration for daily/weekly backups with retention rotation and headless worker.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

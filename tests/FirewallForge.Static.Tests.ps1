@@ -26,9 +26,11 @@ function Assert-PowerShellParses {
 $managerPath = Join-Path $repoRoot "FirewallManager.ps1"
 $editorPath = Join-Path $repoRoot "FirewallRulesEditor.ps1"
 $schemaPath = Join-Path $repoRoot "fwbackup.schema.json"
+$scheduledWorkerPath = Join-Path $repoRoot "FirewallForgeScheduledBackup.ps1"
 
 Assert-PowerShellParses $managerPath
 Assert-PowerShellParses $editorPath
+Assert-PowerShellParses $scheduledWorkerPath
 
 $managerSource = Get-Content -LiteralPath $managerPath -Raw
 Assert-True ($managerSource -match 'function Show-ProgramRuleWizard') "Program wizard function is missing."
@@ -54,6 +56,9 @@ Assert-True ($managerSource -match 'function Show-FirewallLogViewer') "Firewall 
 Assert-True ($managerSource -match 'function Read-FirewallLogEntries') "Firewall log parser is missing."
 Assert-True ($managerSource -match 'pfirewall\.log') "Standard firewall log path is missing."
 Assert-True ($managerSource -match '\$btnLogViewer\.Add_Click') "Firewall log viewer button is not wired."
+Assert-True ($managerSource -match 'function Show-ScheduledBackupDialog') "Scheduled backup dialog is missing."
+Assert-True ($managerSource -match 'Register-ScheduledTask') "Scheduled backup registration is missing."
+Assert-True ($managerSource -match '\$btnScheduleBackups\.Add_Click') "Scheduled backup button is not wired."
 
 $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."

@@ -606,6 +606,8 @@ $Script:ConnectionMonitorLastTime = (Get-Date).AddSeconds(-5)
 $Script:ViewsFolder = Join-Path $env:APPDATA "FirewallForge\Views"
 $Script:LastLockdownSnapshotPath = $null
 $Script:LockdownRulePrefix = "FirewallForge Lockdown - "
+$Script:ScheduledBackupTaskName = "FirewallForge Scheduled Backup"
+$Script:ScheduledBackupWorker = Join-Path $PSScriptRoot "FirewallForgeScheduledBackup.ps1"
 Write-Host "  - Controls bound successfully`n" -ForegroundColor Gray
 
 # ============================================================
@@ -2901,6 +2903,170 @@ function Show-FirewallLogViewer {
     $dialog.ShowDialog() | Out-Null
 }
 
+function Show-ScheduledBackupDialog {
+    if (-not (Test-Path -LiteralPath $Script:ScheduledBackupWorker)) {
+        [System.Windows.MessageBox]::Show(
+            "The scheduled-backup worker is missing:`n$Script:ScheduledBackupWorker",
+            "Scheduled Backup Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+        return
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Schedule Firewall Backups"
+    $dialog.Width = 560
+    $dialog.Height = 390
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(15)
+    for ($rowIndex = 0; $rowIndex -lt 7; $rowIndex++) {
+        $row = New-Object System.Windows.Controls.RowDefinition
+        $row.Height = [System.Windows.GridLength]::Auto
+        $grid.RowDefinitions.Add($row)
+    }
+    $labelColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $labelColumn.Width = New-Object System.Windows.GridLength(145)
+    $grid.ColumnDefinitions.Add($labelColumn)
+    $inputColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $inputColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.ColumnDefinitions.Add($inputColumn)
+
+    $addField = {
+        param([int]$Row, [string]$LabelText, [System.Windows.Controls.Control]$Control)
+        $label = New-Object System.Windows.Controls.Label
+        $label.Content = $LabelText
+        [System.Windows.Controls.Grid]::SetRow($label, $Row)
+        [System.Windows.Controls.Grid]::SetColumn($label, 0)
+        $grid.Children.Add($label) | Out-Null
+        $Control.Margin = New-Object System.Windows.Thickness(5, 3, 5, 3)
+        [System.Windows.Controls.Grid]::SetRow($Control, $Row)
+        [System.Windows.Controls.Grid]::SetColumn($Control, 1)
+        $grid.Children.Add($Control) | Out-Null
+    }.GetNewClosure()
+
+    $frequency = New-Object System.Windows.Controls.ComboBox
+    foreach ($value in @("Daily", "Weekly")) { $frequency.Items.Add($value) | Out-Null }
+    $frequency.SelectedIndex = 0
+    & $addField 0 "Frequency" $frequency
+
+    $day = New-Object System.Windows.Controls.ComboBox
+    foreach ($value in [System.Enum]::GetNames([System.DayOfWeek])) { $day.Items.Add($value) | Out-Null }
+    $day.SelectedItem = "Sunday"
+    & $addField 1 "Weekly day" $day
+
+    $time = New-Object System.Windows.Controls.TextBox
+    $time.Text = "02:00"
+    $time.ToolTip = "24-hour local time, for example 02:00 or 22:30"
+    & $addField 2 "Time" $time
+
+    $retention = New-Object System.Windows.Controls.TextBox
+    $retention.Text = "14"
+    $retention.ToolTip = "Number of scheduled backups to retain"
+    & $addField 3 "Retention count" $retention
+
+    $folder = New-Object System.Windows.Controls.TextBox
+    $folder.Text = $Script:BackupFolder
+    & $addField 4 "Backup folder" $folder
+
+    $info = New-Object System.Windows.Controls.TextBlock
+    $info.Text = "The task runs the non-interactive worker with highest available privileges and rotates only FirewallScheduledBackup_*.fwbackup files."
+    $info.TextWrapping = "Wrap"
+    $info.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $info.Margin = New-Object System.Windows.Thickness(5, 8, 5, 8)
+    [System.Windows.Controls.Grid]::SetRow($info, 5)
+    [System.Windows.Controls.Grid]::SetColumnSpan($info, 2)
+    $grid.Children.Add($info) | Out-Null
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    [System.Windows.Controls.Grid]::SetRow($buttons, 6)
+    [System.Windows.Controls.Grid]::SetColumnSpan($buttons, 2)
+    $remove = New-Object System.Windows.Controls.Button
+    $remove.Content = "Remove Schedule"
+    $remove.Width = 125
+    $remove.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xD3, 0x2F, 0x2F))
+    $remove.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $remove.Add_Click({
+        try {
+            Unregister-ScheduledTask -TaskName $Script:ScheduledBackupTaskName -Confirm:$false -ErrorAction Stop
+            Update-Status "Scheduled backup task removed" "#00FF00"
+            $dialog.Close()
+        }
+        catch {
+            [System.Windows.MessageBox]::Show("Could not remove the scheduled task.`n`n$($_.Exception.Message)", "Task Scheduler Error") | Out-Null
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($remove) | Out-Null
+
+    $runNow = New-Object System.Windows.Controls.Button
+    $runNow.Content = "Run Now"
+    $runNow.Width = 90
+    $runNow.Add_Click({
+        try {
+            Start-ScheduledTask -TaskName $Script:ScheduledBackupTaskName -ErrorAction Stop
+            Update-Status "Scheduled backup task started" "#00FF00"
+            $dialog.Close()
+        }
+        catch {
+            [System.Windows.MessageBox]::Show("Could not start the scheduled task. Register it first.`n`n$($_.Exception.Message)", "Task Scheduler Error") | Out-Null
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($runNow) | Out-Null
+
+    $register = New-Object System.Windows.Controls.Button
+    $register.Content = "Register Schedule"
+    $register.Width = 135
+    $register.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x38, 0x8E, 0x3C))
+    $register.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $register.Add_Click({
+        try {
+            [datetime]$parsedTime = [datetime]::MinValue
+            if (-not [datetime]::TryParse($time.Text.Trim(), [ref]$parsedTime)) {
+                throw "Enter a valid time such as 02:00 or 22:30."
+            }
+            [int]$retentionCount = 0
+            if (-not [int]::TryParse($retention.Text.Trim(), [ref]$retentionCount) -or $retentionCount -lt 1 -or $retentionCount -gt 3650) {
+                throw "Retention count must be between 1 and 3650."
+            }
+            if ([string]::IsNullOrWhiteSpace($folder.Text)) {
+                throw "Backup folder cannot be empty."
+            }
+            $taskAction = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+                -Argument ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -BackupPath "{1}" -RetentionCount {2}' -f $Script:ScheduledBackupWorker, $folder.Text.Trim(), $retentionCount)
+            $atTime = [datetime]::Today.Add($parsedTime.TimeOfDay)
+            if ([string]$frequency.SelectedItem -eq "Weekly") {
+                $dayOfWeek = [System.DayOfWeek]::Parse([string]$day.SelectedItem)
+                $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $dayOfWeek -At $atTime
+            }
+            else {
+                $trigger = New-ScheduledTaskTrigger -Daily -At $atTime
+            }
+            $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
+            $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+            Register-ScheduledTask -TaskName $Script:ScheduledBackupTaskName -Action $taskAction -Trigger $trigger -Principal $principal -Settings $settings -Description "FirewallForge scheduled firewall backup" -Force -ErrorAction Stop | Out-Null
+            Update-Status "Scheduled backup registered ($($frequency.SelectedItem) at $($time.Text))" "#00FF00"
+            $dialog.Close()
+        }
+        catch {
+            [System.Windows.MessageBox]::Show("Could not register the scheduled task.`n`n$($_.Exception.Message)", "Task Scheduler Error") | Out-Null
+        }
+    }.GetNewClosure())
+    $buttons.Children.Add($register) | Out-Null
+    $close = New-Object System.Windows.Controls.Button
+    $close.Content = "Cancel"
+    $close.Width = 90
+    $close.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($close) | Out-Null
+    $grid.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $grid
+    $dialog.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -2929,6 +3095,7 @@ $btnRollbackLockdown.Add_Click({
 $btnRulePriority.Add_Click({ Test-FirewallRulePriority })
 $btnGroupOps.Add_Click({ Show-GroupOperations })
 $btnLogViewer.Add_Click({ Show-FirewallLogViewer })
+$btnScheduleBackups.Add_Click({ Show-ScheduledBackupDialog })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""
