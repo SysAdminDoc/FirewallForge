@@ -2563,6 +2563,148 @@ function Test-FirewallRulePriority {
     Show-ReportWindow -Title "Firewall Rule Priority" -Text $report.ToString() -Width 900 -Height 650
 }
 
+function Show-GroupOperations {
+    $groups = @($Script:AllRules | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Group) } |
+        Select-Object -ExpandProperty Group -Unique | Sort-Object)
+    if (@($Script:AllRules | Where-Object { [string]::IsNullOrWhiteSpace($_.Group) }).Count -gt 0) {
+        $groups += "(Ungrouped)"
+    }
+
+    if ($groups.Count -eq 0) {
+        [System.Windows.MessageBox]::Show(
+            "No rule groups are available in the loaded firewall rules.",
+            "Group Operations",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        return
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Firewall Group Operations"
+    $dialog.Width = 560
+    $dialog.Height = 300
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = New-Object System.Windows.Thickness(20)
+
+    $heading = New-Object System.Windows.Controls.TextBlock
+    $heading.Text = "Enable, disable, or delete every rule in a group"
+    $heading.FontSize = 18
+    $heading.FontWeight = "Bold"
+    $heading.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x00, 0x78, 0xD4))
+    $heading.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($heading) | Out-Null
+
+    $groupLabel = New-Object System.Windows.Controls.Label
+    $groupLabel.Content = "Group"
+    $panel.Children.Add($groupLabel) | Out-Null
+    $groupCombo = New-Object System.Windows.Controls.ComboBox
+    foreach ($group in $groups) {
+        $groupCombo.Items.Add($group) | Out-Null
+    }
+    $groupCombo.SelectedIndex = 0
+    $groupCombo.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+    $panel.Children.Add($groupCombo) | Out-Null
+
+    $operationLabel = New-Object System.Windows.Controls.Label
+    $operationLabel.Content = "Operation"
+    $panel.Children.Add($operationLabel) | Out-Null
+    $operationCombo = New-Object System.Windows.Controls.ComboBox
+    foreach ($operation in @("Enable", "Disable", "Delete")) {
+        $operationCombo.Items.Add($operation) | Out-Null
+    }
+    $operationCombo.SelectedIndex = 0
+    $operationCombo.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+    $panel.Children.Add($operationCombo) | Out-Null
+
+    $countText = New-Object System.Windows.Controls.TextBlock
+    $countText.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $countText.Margin = New-Object System.Windows.Thickness(0, 0, 0, 15)
+    $panel.Children.Add($countText) | Out-Null
+
+    $getGroupRules = {
+        $selectedGroup = [string]$groupCombo.SelectedItem
+        if ($selectedGroup -eq "(Ungrouped)") {
+            return @($Script:AllRules | Where-Object { [string]::IsNullOrWhiteSpace($_.Group) })
+        }
+        return @($Script:AllRules | Where-Object { $_.Group -eq $selectedGroup })
+    }.GetNewClosure()
+
+    $updateCount = {
+        $targetRules = @(& $getGroupRules)
+        $gpoCount = @($targetRules | Where-Object { $_.IsGpo }).Count
+        $countText.Text = "$($targetRules.Count) rule(s) in this group; $gpoCount GPO rule(s) will be skipped."
+    }.GetNewClosure()
+    $groupCombo.Add_SelectionChanged({ & $updateCount }.GetNewClosure())
+    & $updateCount
+
+    $buttons = New-Object System.Windows.Controls.WrapPanel
+    $buttons.HorizontalAlignment = "Right"
+    $cancel = New-Object System.Windows.Controls.Button
+    $cancel.Content = "Cancel"
+    $cancel.Width = 100
+    $cancel.Add_Click({ $dialog.Close() }.GetNewClosure())
+    $buttons.Children.Add($cancel) | Out-Null
+    $apply = New-Object System.Windows.Controls.Button
+    $apply.Content = "Apply Operation"
+    $apply.Width = 140
+    $apply.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xD3, 0x2F, 0x2F))
+    $apply.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Colors]::White)
+    $apply.Add_Click({
+        $targetRules = @(& $getGroupRules)
+        $operation = [string]$operationCombo.SelectedItem
+        if ($targetRules.Count -eq 0) {
+            return
+        }
+
+        $confirm = [System.Windows.MessageBox]::Show(
+            "$operation $($targetRules.Count) rule(s) in '$($groupCombo.SelectedItem)'?`n`nGPO-delivered rules are read-only and will be skipped.",
+            "Confirm Group Operation",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+            return
+        }
+
+        $changed = 0
+        $failed = 0
+        $skipped = 0
+        foreach ($rule in $targetRules) {
+            if ($rule.IsGpo) {
+                $skipped++
+                continue
+            }
+            try {
+                if ($operation -eq "Delete") {
+                    Remove-NetFirewallRule -Name $rule.Name -ErrorAction Stop
+                }
+                else {
+                    Set-NetFirewallRule -Name $rule.Name -Enabled ($operation -eq "Enable") -ErrorAction Stop
+                }
+                $changed++
+            }
+            catch {
+                $failed++
+            }
+        }
+
+        $dialog.Close()
+        $status = "$operation complete: $changed changed"
+        if ($skipped -gt 0) { $status += ", $skipped GPO skipped" }
+        if ($failed -gt 0) { $status += ", $failed failed" }
+        Update-Status $status $(if ($failed -gt 0) { "#FFA500" } else { "#00FF00" })
+        Get-FirewallRules
+    }.GetNewClosure())
+    $buttons.Children.Add($apply) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+
+    $dialog.Content = $panel
+    $dialog.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -2589,6 +2731,7 @@ $btnRollbackLockdown.Add_Click({
     }
 })
 $btnRulePriority.Add_Click({ Test-FirewallRulePriority })
+$btnGroupOps.Add_Click({ Show-GroupOperations })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""

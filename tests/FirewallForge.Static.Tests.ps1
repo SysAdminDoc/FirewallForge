@@ -47,6 +47,9 @@ Assert-True ($managerSource -match 'function Test-FirewallRulePriority') "Rule p
 Assert-True ($managerSource -match 'function Test-FirewallRuleFlowMatch') "Rule predicate walk is missing."
 Assert-True ($managerSource -match 'Test-NetConnection') "Rule priority view does not expose endpoint testing."
 Assert-True ($managerSource -match '\$btnRulePriority\.Add_Click') "Rule priority button is not wired."
+Assert-True ($managerSource -match 'function Show-GroupOperations') "Group operations function is missing."
+Assert-True ($managerSource -match 'Remove-NetFirewallRule -Name \$rule\.Name') "Group delete operation is missing."
+Assert-True ($managerSource -match '\$btnGroupOps\.Add_Click') "Group operations button is not wired."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
