@@ -20,6 +20,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Named manager views for filters, regex state, column layout, and sort descriptions.
 - Added: Bulk tag replace, append, and remove operations with GPO protection.
 - Added: Rule health score audit for broad rules, duplicates, and missing executable paths.
+- Added: Headless FirewallForge.ps1 deployment wrapper with profile validation, idempotent apply, and managed-group pruning.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-v1.1.0-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-PowerShell-lightgrey)
 
-WPF GUI suite for Windows Firewall rule management. Two tools: a **live manager** for your system firewall and an **offline editor** for safe rule manipulation on backup files.
+WPF GUI suite for Windows Firewall rule management plus a headless deployment wrapper. The suite includes a **live manager** for your system firewall, an **offline editor** for safe rule manipulation on backup files, and a **CLI wrapper** for managed deployments.
 
 ## Tools
 
@@ -33,6 +33,33 @@ Offline backup editor:
 - **Rule count in title bar** - always shows current rule count
 - Safe sandbox for planning firewall changes
 
+### FirewallForge.ps1
+Headless deployment wrapper for Intune, Task Scheduler, and other managed rollout tools:
+- Validate a declarative JSON profile without administrator privileges
+- Create or update named firewall rules idempotently
+- Optionally prune rules from the profile's managed group
+
+Profiles use the [fwprofile.schema.json](fwprofile.schema.json) format. A minimal profile looks like:
+
+```json
+{
+  "Version": 1,
+  "Name": "Workstation baseline",
+  "Group": "FirewallForge:Workstation",
+  "Rules": [
+    {
+      "Name": "FirewallForge-Allow-DNS",
+      "DisplayName": "FirewallForge - Allow DNS",
+      "Direction": "Outbound",
+      "Action": "Allow",
+      "Protocol": "UDP",
+      "RemotePort": "53",
+      "Service": "Dnscache"
+    }
+  ]
+}
+```
+
 ## Usage
 
 ```powershell
@@ -41,10 +68,16 @@ Offline backup editor:
 
 # Offline backup editing (no admin needed)
 .\FirewallRulesEditor.ps1
+
+# Validate a deployment profile (no admin needed)
+.\FirewallForge.ps1 validate .\profile.json
+
+# Apply a profile (requires Administrator); -Prune removes stale rules in its group
+.\FirewallForge.ps1 apply .\profile.json -Prune
 ```
 
 ## Requirements
 
 - Windows 10/11
 - PowerShell 5.1+
-- Administrator privileges (FirewallManager only)
+- Administrator privileges (FirewallManager and `FirewallForge.ps1 apply`)

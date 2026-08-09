@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SysAdminDoc/FirewallForge/blob/main/fwprofile.schema.json",
+  "title": "FirewallForge Deployment Profile",
+  "description": "Declarative Windows Firewall rules for FirewallForge.ps1 apply.",
+  "type": "object",
+  "required": ["Rules"],
+  "properties": {
+    "Version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Profile format version."
+    },
+    "Name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable profile name."
+    },
+    "Group": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Windows Firewall group used to identify rules managed by this profile."
+    },
+    "Prune": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, apply removes non-desired rules from this profile's group."
+    },
+    "Rules": {
+      "type": "array",
+      "description": "Desired rules. Existing rules are updated by Name; missing rules are created.",
+      "items": {
+        "$ref": "#/$defs/FirewallRule"
+      }
+    }
+  },
+  "$defs": {
+    "StringOrStringArray": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      ]
+    },
+    "FirewallRule": {
+      "type": "object",
+      "required": ["Name"],
+      "properties": {
+        "Name": { "type": "string", "minLength": 1 },
+        "DisplayName": { "type": "string", "minLength": 1 },
+        "Description": { "type": "string" },
+        "Direction": { "type": "string", "enum": ["Inbound", "Outbound"], "default": "Inbound" },
+        "Action": { "type": "string", "enum": ["Allow", "Block"], "default": "Allow" },
+        "Enabled": { "type": "boolean", "default": true },
+        "Profile": { "$ref": "#/$defs/StringOrStringArray", "description": "Any, Domain, Private, Public, or profile names separated as an array." },
+        "Protocol": { "type": "string", "default": "Any" },
+        "LocalPort": { "$ref": "#/$defs/StringOrStringArray" },
+        "RemotePort": { "$ref": "#/$defs/StringOrStringArray" },
+        "LocalAddress": { "$ref": "#/$defs/StringOrStringArray" },
+        "RemoteAddress": { "$ref": "#/$defs/StringOrStringArray" },
+        "Program": { "$ref": "#/$defs/StringOrStringArray" },
+        "Service": { "$ref": "#/$defs/StringOrStringArray" },
+        "InterfaceAlias": { "$ref": "#/$defs/StringOrStringArray" },
+        "InterfaceType": { "$ref": "#/$defs/StringOrStringArray" },
+        "IcmpType": { "$ref": "#/$defs/StringOrStringArray" },
+        "EdgeTraversalPolicy": { "type": "string" },
+        "LocalUser": { "type": "string" },
+        "RemoteUser": { "type": "string" },
+        "RemoteMachine": { "type": "string" },
+        "Platform": { "$ref": "#/$defs/StringOrStringArray" },
+        "Package": { "$ref": "#/$defs/StringOrStringArray" },
+        "PackageFamilyName": { "$ref": "#/$defs/StringOrStringArray" },
+        "Authentication": { "type": "string" },
+        "Encryption": { "type": "string" },
+        "Owner": { "type": "string" },
+        "PolicyAppId": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

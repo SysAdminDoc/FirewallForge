@@ -27,10 +27,21 @@ $managerPath = Join-Path $repoRoot "FirewallManager.ps1"
 $editorPath = Join-Path $repoRoot "FirewallRulesEditor.ps1"
 $schemaPath = Join-Path $repoRoot "fwbackup.schema.json"
 $scheduledWorkerPath = Join-Path $repoRoot "FirewallForgeScheduledBackup.ps1"
+$cliPath = Join-Path $repoRoot "FirewallForge.ps1"
+$profileSchemaPath = Join-Path $repoRoot "fwprofile.schema.json"
 
 Assert-PowerShellParses $managerPath
 Assert-PowerShellParses $editorPath
 Assert-PowerShellParses $scheduledWorkerPath
+Assert-PowerShellParses $cliPath
+
+$cliSource = Get-Content -LiteralPath $cliPath -Raw
+Assert-True ($cliSource -match 'ValidateSet\("apply", "validate"\)') "CLI apply/validate commands are missing."
+Assert-True ($cliSource -match 'function Read-FirewallForgeProfile') "CLI profile reader is missing."
+Assert-True ($cliSource -match 'function Invoke-FirewallForgeApply') "CLI apply function is missing."
+Assert-True ($cliSource -match 'New-NetFirewallRule') "CLI rule creation is missing."
+Assert-True ($cliSource -match 'Set-NetFirewallRule') "CLI rule update is missing."
+Assert-True ($cliSource -match 'Remove-NetFirewallRule') "CLI prune operation is missing."
 
 $managerSource = Get-Content -LiteralPath $managerPath -Raw
 Assert-True ($managerSource -match 'function Show-ProgramRuleWizard') "Program wizard function is missing."
@@ -153,6 +164,45 @@ try {
 }
 catch {
     Assert-True $false "fwbackup.schema.json is invalid: $($_.Exception.Message)"
+}
+
+try {
+    $null = Get-Content -LiteralPath $profileSchemaPath -Raw | ConvertFrom-Json
+    Assert-True $true "Deployment profile schema parsed."
+}
+catch {
+    Assert-True $false "fwprofile.schema.json is invalid: $($_.Exception.Message)"
+}
+
+$profilePath = Join-Path ([System.IO.Path]::GetTempPath()) ("FirewallForgeProfile_{0}.json" -f [guid]::NewGuid().ToString("N"))
+try {
+    $sampleProfile = [ordered]@{
+        Version = 1
+        Name = "Static smoke profile"
+        Group = "FirewallForge:StaticSmoke"
+        Rules = @(
+            [ordered]@{
+                Name = "FirewallForge-StaticSmoke"
+                DisplayName = "FirewallForge static smoke"
+                Direction = "Outbound"
+                Action = "Block"
+                Enabled = $false
+                Profile = @("Private", "Public")
+                Protocol = "TCP"
+                RemotePort = "443"
+            }
+        )
+    }
+    $sampleProfile | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $profilePath -Encoding UTF8
+    $validationOutput = @(& $cliPath validate $profilePath 2>&1)
+    Assert-True ($LASTEXITCODE -eq 0) "CLI validation command failed: $($validationOutput -join ' ')"
+    Assert-True (($validationOutput -join "`n") -match '"Status":"Valid"') "CLI validation did not report a valid profile."
+}
+catch {
+    Assert-True $false "CLI profile validation smoke test failed: $($_.Exception.Message)"
+}
+finally {
+    if (Test-Path -LiteralPath $profilePath) { Remove-Item -LiteralPath $profilePath -Force }
 }
 
 if ($failures.Count -gt 0) {
