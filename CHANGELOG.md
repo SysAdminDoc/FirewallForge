@@ -9,6 +9,7 @@ All notable changes to FirewallForge will be documented in this file.
 - Added: Reversible outbound lockdown profile with rollback snapshots and essential service exceptions.
 - Added: Approximate rule-priority view with flow predicates and optional endpoint reachability testing.
 - Added: Group operations for enabling, disabling, or deleting rules by group with GPO protection.
+- Added: Tailable pfirewall.log viewer with ALLOW/DROP coloring and action, direction, and port filters.
 
 ## [v1.1.0] - %Y->- (HEAD -> main, tag: v1.1.0, origin/main)
 

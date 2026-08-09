@@ -2705,6 +2705,202 @@ function Show-GroupOperations {
     $dialog.ShowDialog() | Out-Null
 }
 
+function Read-FirewallLogEntries {
+    param(
+        [string]$Path,
+        [int]$Tail = 1000
+    )
+
+    $entries = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($line in @(Get-Content -LiteralPath $Path -Tail $Tail -ErrorAction Stop)) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) {
+            continue
+        }
+        $parts = @($line.Trim() -split '\s+')
+        if ($parts.Count -lt 8) {
+            continue
+        }
+
+        $pathField = if ($parts.Count -gt 16) { $parts[16].ToUpperInvariant() } else { "" }
+        $direction = switch ($pathField) {
+            "RECEIVE" { "Inbound"; break }
+            "SEND" { "Outbound"; break }
+            default { "Unknown" }
+        }
+        $entries.Add([PSCustomObject]@{
+            Raw = $line.Trim()
+            Date = $parts[0]
+            Time = $parts[1]
+            Action = $parts[2].ToUpperInvariant()
+            Protocol = $parts[3].ToUpperInvariant()
+            SourceAddress = $parts[4]
+            DestinationAddress = $parts[5]
+            SourcePort = $parts[6]
+            DestinationPort = $parts[7]
+            Direction = $direction
+        })
+    }
+    return $entries
+}
+
+function Show-FirewallLogViewer {
+    $logPath = Join-Path $env:windir "System32\LogFiles\Firewall\pfirewall.log"
+    if (-not (Test-Path -LiteralPath $logPath)) {
+        [System.Windows.MessageBox]::Show(
+            "The Windows firewall log was not found at:`n$logPath`n`nEnable firewall logging in Windows Defender Firewall settings, then try again.",
+            "Firewall Log Unavailable",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        return
+    }
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = "Firewall Log Viewer"
+    $dialog.Width = 1120
+    $dialog.Height = 700
+    $dialog.WindowStartupLocation = "CenterOwner"
+    $dialog.Owner = $Window
+    $dialog.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x1E, 0x1E, 0x1E))
+    $logState = @{ Path = $logPath }
+
+    $grid = New-Object System.Windows.Controls.Grid
+    $grid.Margin = New-Object System.Windows.Thickness(12)
+    $headerRow = New-Object System.Windows.Controls.RowDefinition
+    $headerRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($headerRow)
+    $logRow = New-Object System.Windows.Controls.RowDefinition
+    $logRow.Height = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+    $grid.RowDefinitions.Add($logRow)
+    $statusRow = New-Object System.Windows.Controls.RowDefinition
+    $statusRow.Height = [System.Windows.GridLength]::Auto
+    $grid.RowDefinitions.Add($statusRow)
+
+    $toolbar = New-Object System.Windows.Controls.WrapPanel
+    $toolbar.VerticalAlignment = "Center"
+    $pathText = New-Object System.Windows.Controls.TextBlock
+    $pathText.Text = $logPath
+    $pathText.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $pathText.Margin = New-Object System.Windows.Thickness(0, 0, 15, 5)
+    $toolbar.Children.Add($pathText) | Out-Null
+
+    $chooseButton = New-Object System.Windows.Controls.Button
+    $chooseButton.Content = "Choose Log"
+    $chooseButton.Width = 100
+    $toolbar.Children.Add($chooseButton) | Out-Null
+
+    $actionCombo = New-Object System.Windows.Controls.ComboBox
+    $actionCombo.Width = 110
+    foreach ($value in @("All actions", "ALLOW", "DROP")) { $actionCombo.Items.Add($value) | Out-Null }
+    $actionCombo.SelectedIndex = 0
+    $actionCombo.Margin = New-Object System.Windows.Thickness(10, 0, 5, 5)
+    $toolbar.Children.Add($actionCombo) | Out-Null
+
+    $directionCombo = New-Object System.Windows.Controls.ComboBox
+    $directionCombo.Width = 115
+    foreach ($value in @("All directions", "Inbound", "Outbound", "Unknown")) { $directionCombo.Items.Add($value) | Out-Null }
+    $directionCombo.SelectedIndex = 0
+    $directionCombo.Margin = New-Object System.Windows.Thickness(5, 0, 5, 5)
+    $toolbar.Children.Add($directionCombo) | Out-Null
+
+    $portBox = New-Object System.Windows.Controls.TextBox
+    $portBox.Width = 100
+    $portBox.ToolTip = "Source or destination port"
+    $portBox.Margin = New-Object System.Windows.Thickness(5, 0, 5, 5)
+    $toolbar.Children.Add($portBox) | Out-Null
+
+    $refreshButton = New-Object System.Windows.Controls.Button
+    $refreshButton.Content = "Refresh"
+    $refreshButton.Width = 90
+    $toolbar.Children.Add($refreshButton) | Out-Null
+
+    $autoRefresh = New-Object System.Windows.Controls.CheckBox
+    $autoRefresh.Content = "Auto-refresh (3s)"
+    $autoRefresh.Margin = New-Object System.Windows.Thickness(10, 0, 5, 5)
+    $toolbar.Children.Add($autoRefresh) | Out-Null
+    [System.Windows.Controls.Grid]::SetRow($toolbar, 0)
+    $grid.Children.Add($toolbar) | Out-Null
+
+    $richText = New-Object System.Windows.Controls.RichTextBox
+    $richText.IsReadOnly = $true
+    $richText.VerticalScrollBarVisibility = "Auto"
+    $richText.HorizontalScrollBarVisibility = "Auto"
+    $richText.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x25, 0x25, 0x26))
+    $richText.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+    $richText.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $richText.FontSize = 11
+    [System.Windows.Controls.Grid]::SetRow($richText, 1)
+    $grid.Children.Add($richText) | Out-Null
+
+    $status = New-Object System.Windows.Controls.TextBlock
+    $status.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xB0, 0xB0, 0xB0))
+    $status.Margin = New-Object System.Windows.Thickness(0, 8, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($status, 2)
+    $grid.Children.Add($status) | Out-Null
+
+    $render = {
+        try {
+            $entries = @(Read-FirewallLogEntries -Path $logState.Path -Tail 1000)
+            $action = [string]$actionCombo.SelectedItem
+            $direction = [string]$directionCombo.SelectedItem
+            $port = $portBox.Text.Trim()
+            $filtered = @($entries | Where-Object {
+                ($action -eq "All actions" -or $_.Action -eq $action) -and
+                ($direction -eq "All directions" -or $_.Direction -eq $direction) -and
+                ([string]::IsNullOrWhiteSpace($port) -or $_.SourcePort -eq $port -or $_.DestinationPort -eq $port)
+            })
+
+            $document = New-Object System.Windows.Documents.FlowDocument
+            $document.PagePadding = New-Object System.Windows.Thickness(6)
+            foreach ($entry in $filtered) {
+                $paragraph = New-Object System.Windows.Documents.Paragraph
+                $paragraph.Margin = New-Object System.Windows.Thickness(0)
+                $run = New-Object System.Windows.Documents.Run($entry.Raw)
+                if ($entry.Action -eq "DROP") {
+                    $run.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xFF, 0x66, 0x66))
+                }
+                elseif ($entry.Action -eq "ALLOW") {
+                    $run.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0x66, 0xDD, 0x88))
+                }
+                else {
+                    $run.Foreground = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(0xE0, 0xE0, 0xE0))
+                }
+                $paragraph.Inlines.Add($run) | Out-Null
+                $document.Blocks.Add($paragraph) | Out-Null
+            }
+            $richText.Document = $document
+            $status.Text = "Showing $($filtered.Count) of $($entries.Count) log entries (tail 1000)"
+        }
+        catch {
+            $status.Text = "Could not read firewall log: $($_.Exception.Message)"
+        }
+    }.GetNewClosure()
+
+    $chooseButton.Add_Click({
+        $openDialog = New-Object Microsoft.Win32.OpenFileDialog
+        $openDialog.Filter = "Firewall logs (*.log)|*.log|All files (*.*)|*.*"
+        $openDialog.FileName = [System.IO.Path]::GetFileName($logState.Path)
+        if ($openDialog.ShowDialog()) {
+            $logState.Path = $openDialog.FileName
+            $pathText.Text = $logState.Path
+            & $render
+        }
+    }.GetNewClosure())
+    $refreshButton.Add_Click({ & $render }.GetNewClosure())
+    $actionCombo.Add_SelectionChanged({ & $render }.GetNewClosure())
+    $directionCombo.Add_SelectionChanged({ & $render }.GetNewClosure())
+    $portBox.Add_KeyDown({ if ($_.Key -eq [System.Windows.Input.Key]::Enter) { & $render } }.GetNewClosure())
+
+    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval = New-Object System.TimeSpan(0, 0, 3)
+    $timer.Add_Tick({ if ($autoRefresh.IsChecked) { & $render } }.GetNewClosure())
+    $timer.Start()
+    $dialog.Add_Closed({ $timer.Stop() }.GetNewClosure())
+
+    $dialog.Content = $grid
+    & $render
+    $dialog.ShowDialog() | Out-Null
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -2732,6 +2928,7 @@ $btnRollbackLockdown.Add_Click({
 })
 $btnRulePriority.Add_Click({ Test-FirewallRulePriority })
 $btnGroupOps.Add_Click({ Show-GroupOperations })
+$btnLogViewer.Add_Click({ Show-FirewallLogViewer })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""

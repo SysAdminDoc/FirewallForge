@@ -50,6 +50,10 @@ Assert-True ($managerSource -match '\$btnRulePriority\.Add_Click') "Rule priorit
 Assert-True ($managerSource -match 'function Show-GroupOperations') "Group operations function is missing."
 Assert-True ($managerSource -match 'Remove-NetFirewallRule -Name \$rule\.Name') "Group delete operation is missing."
 Assert-True ($managerSource -match '\$btnGroupOps\.Add_Click') "Group operations button is not wired."
+Assert-True ($managerSource -match 'function Show-FirewallLogViewer') "Firewall log viewer is missing."
+Assert-True ($managerSource -match 'function Read-FirewallLogEntries') "Firewall log parser is missing."
+Assert-True ($managerSource -match 'pfirewall\.log') "Standard firewall log path is missing."
+Assert-True ($managerSource -match '\$btnLogViewer\.Add_Click') "Firewall log viewer button is not wired."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
