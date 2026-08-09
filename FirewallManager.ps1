@@ -3067,6 +3067,76 @@ function Show-ScheduledBackupDialog {
     $dialog.ShowDialog() | Out-Null
 }
 
+function Get-IPv6AuditKey {
+    param([object]$Rule)
+
+    $protocol = switch ([string]$Rule.Protocol) {
+        "ICMPv4" { "ICMP"; break }
+        "ICMPv6" { "ICMP"; break }
+        default { [string]$Rule.Protocol }
+    }
+    return @(
+        $Rule.DisplayName, $Rule.Direction, $Rule.Action, $Rule.Enabled, $Rule.Profile,
+        $protocol, $Rule.LocalPort, $Rule.RemotePort, $Rule.Program, $Rule.Service
+    ) -join "|"
+}
+
+function Test-IsIPv4OnlyRule {
+    param([object]$Rule)
+
+    if ([string]$Rule.Protocol -eq "ICMPv4") {
+        return $true
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Rule.RemoteAddress) -or [string]$Rule.RemoteAddress -eq "Any") {
+        return $false
+    }
+    $addresses = @([string]$Rule.RemoteAddress -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    return ($addresses.Count -gt 0 -and ($addresses | Where-Object { $_ -match ':' }).Count -eq 0 -and ($addresses | Where-Object { $_ -match '\d+\.' }).Count -gt 0)
+}
+
+function Show-IPv6CoverageAudit {
+    if (-not $Script:AllRules -or $Script:AllRules.Count -eq 0) {
+        Update-Status "No rules loaded for IPv6 audit" "#FFA500"
+        return
+    }
+
+    $ipv6Candidates = @($Script:AllRules | Where-Object {
+        (-not (Test-IsIPv4OnlyRule -Rule $_)) -and
+        (([string]$_.RemoteAddress -match ':') -or ([string]$_.Protocol -eq "ICMPv6"))
+    })
+    $missing = New-Object System.Collections.Generic.List[PSObject]
+    foreach ($rule in @($Script:AllRules | Where-Object { Test-IsIPv4OnlyRule -Rule $_ })) {
+        $key = Get-IPv6AuditKey -Rule $rule
+        $twin = @($ipv6Candidates | Where-Object { (Get-IPv6AuditKey -Rule $_) -eq $key })
+        if ($twin.Count -eq 0) {
+            $missing.Add($rule)
+        }
+    }
+
+    $report = New-Object System.Text.StringBuilder
+    [void]$report.AppendLine("IPV6 COVERAGE AUDIT")
+    [void]$report.AppendLine("=" * 72)
+    [void]$report.AppendLine("Rules checked: $($Script:AllRules.Count)")
+    [void]$report.AppendLine("Potential IPv4-only gaps: $($missing.Count)")
+    [void]$report.AppendLine("")
+    [void]$report.AppendLine("A rule is listed when it is limited to IPv4 addresses or ICMPv4 and no matching IPv6 rule was found by display name, direction, action, profile, protocol family, ports, program, and service.")
+    [void]$report.AppendLine("")
+
+    if ($missing.Count -eq 0) {
+        [void]$report.AppendLine("No IPv6 coverage gaps were detected by this heuristic.")
+    }
+    else {
+        foreach ($rule in $missing) {
+            [void]$report.AppendLine("- $($rule.DisplayName)")
+            [void]$report.AppendLine("  $($rule.Direction) $($rule.Action), Protocol=$($rule.Protocol), Remote=$($rule.RemoteAddress), Ports=$($rule.LocalPort)->$($rule.RemotePort)")
+            [void]$report.AppendLine("  Suggested action: duplicate the rule with an IPv6 address scope or ICMPv6 protocol, then review before applying.")
+        }
+    }
+
+    Update-Status "IPv6 audit complete: $($missing.Count) potential gap(s)" $(if ($missing.Count -gt 0) { "#FFA500" } else { "#00FF00" })
+    Show-ReportWindow -Title "IPv6 Coverage Audit" -Text $report.ToString() -Width 900 -Height 650
+}
+
 # ============================================================
 # Event Handlers
 # ============================================================
@@ -3096,6 +3166,7 @@ $btnRulePriority.Add_Click({ Test-FirewallRulePriority })
 $btnGroupOps.Add_Click({ Show-GroupOperations })
 $btnLogViewer.Add_Click({ Show-FirewallLogViewer })
 $btnScheduleBackups.Add_Click({ Show-ScheduledBackupDialog })
+$btnAuditRules.Add_Click({ Show-IPv6CoverageAudit })
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""

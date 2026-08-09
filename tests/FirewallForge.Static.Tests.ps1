@@ -59,6 +59,9 @@ Assert-True ($managerSource -match '\$btnLogViewer\.Add_Click') "Firewall log vi
 Assert-True ($managerSource -match 'function Show-ScheduledBackupDialog') "Scheduled backup dialog is missing."
 Assert-True ($managerSource -match 'Register-ScheduledTask') "Scheduled backup registration is missing."
 Assert-True ($managerSource -match '\$btnScheduleBackups\.Add_Click') "Scheduled backup button is not wired."
+Assert-True ($managerSource -match 'function Show-IPv6CoverageAudit') "IPv6 coverage audit is missing."
+Assert-True ($managerSource -match 'function Test-IsIPv4OnlyRule') "IPv4-only rule heuristic is missing."
+Assert-True ($managerSource -match '\$btnAuditRules\.Add_Click') "IPv6 audit button is not wired."
 
 $editorSource = Get-Content -LiteralPath $editorPath -Raw
 Assert-True ($editorSource -match 'function Compare-FWBackups') "Two-backup comparison function is missing."
