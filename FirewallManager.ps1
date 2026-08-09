@@ -604,6 +604,8 @@ $Script:ConnectionMonitorTimer = $null
 $Script:SeenConnectionEvents = @{}
 $Script:ConnectionMonitorLastTime = (Get-Date).AddSeconds(-5)
 $Script:ViewsFolder = Join-Path $env:APPDATA "FirewallForge\Views"
+$Script:LastLockdownSnapshotPath = $null
+$Script:LockdownRulePrefix = "FirewallForge Lockdown - "
 Write-Host "  - Controls bound successfully`n" -ForegroundColor Gray
 
 # ============================================================
@@ -1379,6 +1381,186 @@ function Restore-FirewallRules {
     }
 }
 
+function New-LockdownSnapshot {
+    if (-not (Test-Path -LiteralPath $Script:BackupFolder)) {
+        New-Item -ItemType Directory -Path $Script:BackupFolder -Force | Out-Null
+    }
+
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        $netshResult = netsh advfirewall export $tempFile 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tempFile)) {
+            throw "netsh export failed: $netshResult"
+        }
+
+        $snapshot = [ordered]@{
+            BackupDate = (Get-Date).ToString("o")
+            ComputerName = $env:COMPUTERNAME
+            RuleCount = @($Script:AllRules).Count
+            NetshBackup = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($tempFile))
+            RuleDetails = @($Script:AllRules)
+            LockdownSnapshot = $true
+            ProfileDefaults = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue | Select-Object Name, DefaultInboundAction, DefaultOutboundAction)
+        }
+        $path = Join-Path $Script:BackupFolder "FirewallLockdown_$(Get-Date -Format 'yyyyMMdd_HHmmss').fwbackup"
+        $snapshot | ConvertTo-Json -Depth 20 -Compress | Set-Content -LiteralPath $path -Encoding UTF8
+        return $path
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempFile) {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function New-LockdownAllowRule {
+    param(
+        [string]$Name,
+        [ValidateSet("TCP", "UDP")]
+        [string]$Protocol,
+        [string]$RemotePort,
+        [string]$LocalPort = "",
+        [string]$Service
+    )
+
+    $params = @{
+        DisplayName = "$Script:LockdownRulePrefix$Name"
+        Direction = "Outbound"
+        Action = "Allow"
+        Profile = "Any"
+        Enabled = "True"
+        Protocol = $Protocol
+        RemotePort = $RemotePort
+        Description = "Essential service exception created by FirewallForge outbound lockdown"
+        ErrorAction = "Stop"
+    }
+    if ($LocalPort) {
+        $params.LocalPort = $LocalPort
+    }
+    if ($Service) {
+        $params.Service = $Service
+    }
+
+    New-NetFirewallRule @params | Out-Null
+}
+
+function Restore-LockdownSnapshot {
+    param(
+        [string]$SnapshotPath = "",
+        [switch]$SkipConfirmation
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SnapshotPath)) {
+        if ($Script:LastLockdownSnapshotPath -and (Test-Path -LiteralPath $Script:LastLockdownSnapshotPath)) {
+            $SnapshotPath = $Script:LastLockdownSnapshotPath
+        }
+        else {
+            $SnapshotPath = Get-ChildItem -LiteralPath $Script:BackupFolder -Filter "FirewallLockdown_*.fwbackup" -File -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SnapshotPath) -or -not (Test-Path -LiteralPath $SnapshotPath)) {
+        throw "No outbound lockdown snapshot was found in $Script:BackupFolder."
+    }
+
+    $snapshot = Get-Content -LiteralPath $SnapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($snapshot.NetshBackup)) {
+        throw "The selected file is not a valid FirewallForge lockdown snapshot."
+    }
+
+    if (-not $SkipConfirmation) {
+        $confirm = [System.Windows.MessageBox]::Show(
+            "Restore the firewall state captured on $($snapshot.BackupDate)?`n`nSnapshot: $SnapshotPath`n`nThis replaces the current firewall configuration.",
+            "Confirm Lockdown Rollback",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+            Update-Status "Lockdown rollback cancelled" "#808080"
+            return
+        }
+    }
+
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        Update-Status "Restoring outbound lockdown snapshot..." "#FFA500"
+        $netshBytes = [Convert]::FromBase64String($snapshot.NetshBackup)
+        [System.IO.File]::WriteAllBytes($tempFile, $netshBytes)
+        $netshResult = netsh advfirewall import $tempFile 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "netsh import failed: $netshResult"
+        }
+
+        $Script:LastLockdownSnapshotPath = $SnapshotPath
+        Update-Status "Firewall state restored from lockdown snapshot" "#00FF00"
+        if ($Window.IsVisible) {
+            Get-FirewallRules
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempFile) {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Enable-OutboundLockdown {
+    $confirm = [System.Windows.MessageBox]::Show(
+        "Set the Domain, Private, and Public firewall profiles to block outbound traffic?`n`nFirewallForge will first save a complete rollback snapshot and add essential DNS, DHCP, time-sync, and update exceptions.",
+        "Confirm Outbound Lockdown",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Warning)
+    if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
+        Update-Status "Outbound lockdown cancelled" "#808080"
+        return
+    }
+
+    $snapshotPath = $null
+    try {
+        Update-Status "Saving rollback snapshot..." "#FFA500"
+        $snapshotPath = New-LockdownSnapshot
+        $Script:LastLockdownSnapshotPath = $snapshotPath
+
+        # Replace only rules previously created by this workflow.
+        @(Get-NetFirewallRule -DisplayName "$Script:LockdownRulePrefix*" -ErrorAction SilentlyContinue) |
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
+        Set-NetFirewallProfile -Profile Domain, Private, Public -DefaultOutboundAction Block -ErrorAction Stop
+
+        New-LockdownAllowRule -Name "DNS UDP" -Protocol UDP -RemotePort "53" -Service "Dnscache"
+        New-LockdownAllowRule -Name "DNS TCP" -Protocol TCP -RemotePort "53" -Service "Dnscache"
+        New-LockdownAllowRule -Name "DHCP" -Protocol UDP -LocalPort "68" -RemotePort "67" -Service "Dhcp"
+        New-LockdownAllowRule -Name "Time Sync" -Protocol UDP -RemotePort "123" -Service "W32Time"
+        New-LockdownAllowRule -Name "Windows Update" -Protocol TCP -RemotePort "80,443" -Service "wuauserv"
+        New-LockdownAllowRule -Name "BITS Updates" -Protocol TCP -RemotePort "80,443" -Service "BITS"
+
+        Update-Status "Outbound lockdown enabled; rollback snapshot saved to $snapshotPath" "#00FF00"
+        [System.Windows.MessageBox]::Show(
+            "Outbound blocking is enabled for all firewall profiles.`n`nRollback snapshot:`n$snapshotPath",
+            "Outbound Lockdown Enabled",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Information) | Out-Null
+        Get-FirewallRules
+    }
+    catch {
+        if ($snapshotPath -and (Test-Path -LiteralPath $snapshotPath)) {
+            try {
+                Restore-LockdownSnapshot -SnapshotPath $snapshotPath -SkipConfirmation
+            }
+            catch {
+                Update-Status "Lockdown failed and automatic rollback also failed: $($_.Exception.Message)" "#FF0000"
+            }
+        }
+        Update-Status "Outbound lockdown failed: $($_.Exception.Message)" "#FF0000"
+        [System.Windows.MessageBox]::Show(
+            "Outbound lockdown could not be completed.`n`nError: $($_.Exception.Message)",
+            "Outbound Lockdown Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+}
+
 function Search-Rules {
     $searchText = $txtSearch.Text.Trim()
     $groupFilter = $cmbGroupFilter.SelectedItem
@@ -2085,6 +2267,20 @@ $btnFindDuplicates.Add_Click({ Find-DuplicateRules })
 $btnQuickBlock.Add_Click({ Show-QuickBlockMenu })
 $btnProgramWizard.Add_Click({ Show-ProgramRuleWizard })
 $btnConnectionMonitor.Add_Click({ Toggle-ConnectionMonitor })
+$btnOutboundLockdown.Add_Click({ Enable-OutboundLockdown })
+$btnRollbackLockdown.Add_Click({
+    try {
+        Restore-LockdownSnapshot
+    }
+    catch {
+        Update-Status "Lockdown rollback failed: $($_.Exception.Message)" "#FF0000"
+        [System.Windows.MessageBox]::Show(
+            "Could not roll back the outbound lockdown.`n`nError: $($_.Exception.Message)",
+            "Lockdown Rollback Error",
+            [System.Windows.MessageBoxButton]::OK,
+            [System.Windows.MessageBoxImage]::Error) | Out-Null
+    }
+})
 $btnSearch.Add_Click({ Search-Rules })
 $btnClearSearch.Add_Click({
     $txtSearch.Text = ""

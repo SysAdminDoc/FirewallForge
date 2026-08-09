@@ -39,6 +39,10 @@ Assert-True ($managerSource -match 'Allow Out') "Program wizard outbound preset 
 Assert-True ($managerSource -match 'function Toggle-ConnectionMonitor') "Connection monitor toggle is missing."
 Assert-True ($managerSource -match 'Id = @\(5156, 5157\)') "Connection monitor event query is missing 5156/5157."
 Assert-True ($managerSource -match '\$btnConnectionMonitor\.Add_Click') "Connection monitor button is not wired."
+Assert-True ($managerSource -match 'function Enable-OutboundLockdown') "Outbound lockdown function is missing."
+Assert-True ($managerSource -match 'function Restore-LockdownSnapshot') "Lockdown rollback function is missing."
+Assert-True ($managerSource -match 'DefaultOutboundAction Block') "Outbound lockdown does not change the default action."
+Assert-True ($managerSource -match 'function New-LockdownAllowRule') "Essential lockdown allow-rule helper is missing."
 
 try {
     $null = Get-Content -LiteralPath $schemaPath -Raw | ConvertFrom-Json
