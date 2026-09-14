@@ -4,6 +4,16 @@
 
 ![Version](https://img.shields.io/badge/version-v1.3.0-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Platform](https://img.shields.io/badge/platform-PowerShell-lightgrey)
 
+<p align="center">
+  <a href="https://ko-fi.com/X8K126YVER">
+    <img height="42" src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Buy me a coffee on Ko-fi" />
+  </a>
+</p>
+
+<p align="center">
+  <sub><em>If this project helps you, a coffee helps me keep working on it.</em></sub>
+</p>
+
 WPF GUI suite for Windows Firewall rule management plus a headless deployment wrapper. The suite includes a **live manager** for your system firewall, an **offline editor** for safe rule manipulation on backup files, and a **CLI wrapper** for managed deployments.
 
 ## Tools
